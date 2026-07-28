@@ -1,0 +1,98 @@
+{
+  "entity_maps": {
+    "your_brand": {
+      "primary_name": "Brand_A",
+      "display_name": "Brand A (Your Company)",
+      "wikidata_id": "Q0000000",
+      "knowledge_graph_id": "/g/11cxxxxxxxxx",
+      "aliases": ["Brand A", "BrandA", "BA", "brand-a", "Brand_A_Official"],
+      "website": "https://www.brand-a.com",
+      "category": "Enterprise Software",
+      "attributes": {
+        "features": ["SOC2 Type II", "HIPAA Compliant", "Zero-Trust", "API-First", "Real-time Analytics"],
+        "pricing_model": "subscription",
+        "target_segment": ["Enterprise", "Mid-Market"],
+        "certifications": ["SOC2 Type II", "ISO 27001", "GDPR"],
+        "known_issues": ["Complex onboarding", "Premium pricing"],
+        "unique_selling_points": ["AI-powered automation", "99.99% uptime SLA", "24/7 enterprise support"]
+      },
+      "ground_truth_urls": [
+        "https://www.brand-a.com/docs/security",
+        "https://www.brand-a.com/docs/api-reference",
+        "https://www.brand-a.com/customers",
+        "https://www.brand-a.com/pricing",
+        "https://www.brand-a.com/blog/best-practices"
+      ],
+      "monitoring_keywords": ["brand a", "brand_a", "brand-a"]
+    },
+    "competitors": [
+      {
+        "primary_name": "Competitor_B",
+        "display_name": "Competitor B",
+        "wikidata_id": "Q0000001",
+        "aliases": ["CompetitorB", "CB", "competitor-b"],
+        "website": "https://www.competitor-b.com",
+        "attributes": {
+          "features": ["SOC2 Type II", "HIPAA", "SAML SSO", "RBAC"],
+          "pricing_model": "usage_based",
+          "known_press": ["Featured in Gartner MQ", "Forrester Wave Leader"],
+          "market_position": "Market Leader"
+        },
+        "monitoring_keywords": ["competitor b", "competitor_b", "competitor-b"]
+      },
+      {
+        "primary_name": "Competitor_C",
+        "display_name": "Competitor C",
+        "wikidata_id": "Q0000002",
+        "aliases": ["CompetitorC", "CC", "competitor-c"],
+        "website": "https://www.competitor-c.com",
+        "attributes": {
+          "features": ["Open Source", "Self-Hosted", "Kubernetes Native"],
+          "pricing_model": "open_source_commercial",
+          "known_press": ["GitHub 50k stars", "CNCF Graduated"],
+          "market_position": "Challenger"
+        },
+        "monitoring_keywords": ["competitor c", "competitor_c", "competitor-c"]
+      }
+    ],
+    "external_authority_sources": [
+      {
+        "domain": "reddit.com",
+        "authority_weight": 0.9,
+        "category": "community_discussion",
+        "monitor_subreddits": ["r/netsec", "r/devops", "r/saas", "r/cybersecurity"]
+      },
+      {
+        "domain": "gartner.com",
+        "authority_weight": 1.0,
+        "category": "analyst_report",
+        "report_types": ["Magic Quadrant", "Critical Capabilities", "Peer Insights"]
+      },
+      {
+        "domain": "g2.com",
+        "authority_weight": 0.85,
+        "category": "review_platform"
+      },
+      {
+        "domain": "stackoverflow.com",
+        "authority_weight": 0.8,
+        "category": "technical_qa"
+      },
+      {
+        "domain": "techcrunch.com",
+        "authority_weight": 0.75,
+        "category": "tech_news"
+      },
+      {
+        "domain": "capterra.com",
+        "authority_weight": 0.8,
+        "category": "review_platform"
+      },
+      {
+        "domain": "forrester.com",
+        "authority_weight": 1.0,
+        "category": "analyst_report"
+      }
+    ]
+  }
+}

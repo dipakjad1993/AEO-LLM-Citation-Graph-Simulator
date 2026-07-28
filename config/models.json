@@ -1,0 +1,155 @@
+{
+  "models": {
+    "openai": {
+      "gpt-4o": {
+        "model_id": "gpt-4o",
+        "display_name": "ChatGPT (GPT-4o)",
+        "provider": "openai",
+        "supports_web_search": true,
+        "supports_seed": true,
+        "max_tokens": 128000,
+        "cost_per_1k_input": 0.005,
+        "cost_per_1k_output": 0.015,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.openai.com/v1/chat/completions",
+        "search_enabled_params": {
+          "tools": [{"type": "web_search_preview"}]
+        }
+      },
+      "gpt-4o-mini": {
+        "model_id": "gpt-4o-mini",
+        "display_name": "ChatGPT (GPT-4o-mini)",
+        "provider": "openai",
+        "supports_web_search": true,
+        "supports_seed": true,
+        "max_tokens": 128000,
+        "cost_per_1k_input": 0.00015,
+        "cost_per_1k_output": 0.0006,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.openai.com/v1/chat/completions"
+      }
+    },
+    "anthropic": {
+      "claude-3-5-sonnet": {
+        "model_id": "claude-3-5-sonnet-20241022",
+        "display_name": "Claude 3.5 Sonnet",
+        "provider": "anthropic",
+        "supports_web_search": false,
+        "supports_seed": false,
+        "max_tokens": 200000,
+        "cost_per_1k_input": 0.003,
+        "cost_per_1k_output": 0.015,
+        "temperature_range": [0.0, 1.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.anthropic.com/v1/messages"
+      },
+      "claude-3-opus": {
+        "model_id": "claude-3-opus-20240229",
+        "display_name": "Claude 3 Opus",
+        "provider": "anthropic",
+        "supports_web_search": false,
+        "supports_seed": false,
+        "max_tokens": 200000,
+        "cost_per_1k_input": 0.015,
+        "cost_per_1k_output": 0.075,
+        "temperature_range": [0.0, 1.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.anthropic.com/v1/messages"
+      }
+    },
+    "google": {
+      "gemini-1.5-pro": {
+        "model_id": "gemini-1.5-pro",
+        "display_name": "Gemini 1.5 Pro",
+        "provider": "google",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 2000000,
+        "cost_per_1k_input": 0.00125,
+        "cost_per_1k_output": 0.005,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models"
+      },
+      "gemini-2.0-flash": {
+        "model_id": "gemini-2.0-flash",
+        "display_name": "Gemini 2.0 Flash",
+        "provider": "google",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 1000000,
+        "cost_per_1k_input": 0.000075,
+        "cost_per_1k_output": 0.0003,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models"
+      }
+    },
+    "perplexity": {
+      "sonar-pro": {
+        "model_id": "sonar-pro",
+        "display_name": "Perplexity Sonar Pro",
+        "provider": "perplexity",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 200000,
+        "cost_per_1k_input": 0.003,
+        "cost_per_1k_output": 0.015,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": false,
+        "api_endpoint": "https://api.perplexity.ai/chat/completions",
+        "always_search": true
+      },
+      "sonar-online": {
+        "model_id": "sonar",
+        "display_name": "Perplexity Sonar Online",
+        "provider": "perplexity",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 200000,
+        "cost_per_1k_input": 0.001,
+        "cost_per_1k_output": 0.001,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": false,
+        "api_endpoint": "https://api.perplexity.ai/chat/completions",
+        "always_search": true
+      }
+    },
+    "deepseek": {
+      "deepseek-v2": {
+        "model_id": "deepseek-chat",
+        "display_name": "DeepSeek V2",
+        "provider": "deepseek",
+        "supports_web_search": false,
+        "supports_seed": false,
+        "max_tokens": 128000,
+        "cost_per_1k_input": 0.00014,
+        "cost_per_1k_output": 0.00028,
+        "temperature_range": [0.0, 2.0],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.deepseek.com/chat/completions"
+      }
+    }
+  },
+  "playwright_targets": {
+    "chatgpt_web": {
+      "url": "https://chatgpt.com",
+      "requires_auth": true,
+      "auth_method": "cookie",
+      "session_file": "./data/sessions/chatgpt.json"
+    },
+    "claude_web": {
+      "url": "https://claude.ai",
+      "requires_auth": true,
+      "auth_method": "cookie",
+      "session_file": "./data/sessions/claude.json"
+    },
+    "perplexity_web": {
+      "url": "https://www.perplexity.ai",
+      "requires_auth": false,
+      "auth_method": "none"
+    }
+  }
+}

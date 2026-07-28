@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AEO Citation Graph Simulator Configuration",
+  "description": "Master configuration schema for the AEO & LLM Citation Graph Simulator",
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["name", "version"]
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": ["hybrid", "api_only", "playwright_only"],
+      "default": "hybrid"
+    },
+    "models": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of model IDs to query"
+    },
+    "personas": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of persona IDs to use for prompt generation"
+    },
+    "target_entities": {
+      "type": "object",
+      "properties": {
+        "primary_brand": { "type": "string" },
+        "competitors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["primary_brand", "competitors"]
+    },
+    "prompt_config": {
+      "type": "object",
+      "properties": {
+        "total_prompts": { "type": "integer", "minimum": 1, "maximum": 50000 },
+        "multi_turn": { "type": "boolean" },
+        "turns_per_session": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "enable_attribution_split": { "type": "boolean" }
+      }
+    },
+    "analytics_config": {
+      "type": "object",
+      "properties": {
+        "enable_nlp": { "type": "boolean" },
+        "enable_graph": { "type": "boolean" },
+        "enable_embeddings": { "type": "boolean" },
+        "enable_sentiment": { "type": "boolean" }
+      }
+    },
+    "output_config": {
+      "type": "object",
+      "properties": {
+        "formats": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["json", "csv", "html", "pdf"] }
+        },
+        "output_dir": { "type": "string" }
+      }
+    }
+  },
+  "required": ["project", "target_entities"]
+}

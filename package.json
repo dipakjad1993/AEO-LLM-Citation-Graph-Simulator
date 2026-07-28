@@ -1,0 +1,39 @@
+{
+  "name": "aeo-llm-citation-graph-simulator",
+  "version": "1.0.0",
+  "description": "AEO & LLM Citation Graph Simulator - Generative Engine Optimization",
+  "main": "src/node-orchestrator/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/node-orchestrator/index.js",
+    "orchestrate": "node src/node-orchestrator/index.js --mode orchestrate",
+    "analyze": "python src/python-engine/main.py",
+    "dashboard": "python src/python-engine/dashboard/generate.py",
+    "full-run": "node src/node-orchestrator/index.js --mode orchestrate && python src/python-engine/main.py && python src/python-engine/dashboard/generate.py",
+    "install-deps": "npm install && pip install -r requirements.txt",
+    "generate-prompts": "node src/node-orchestrator/utils/promptGenerator.js",
+    "test": "node src/node-orchestrator/utils/testRunner.js"
+  },
+  "dependencies": {
+    "playwright": "^1.45.0",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "openai": "^4.52.0",
+    "@anthropic-ai/sdk": "^0.25.0",
+    "@google/generative-ai": "^0.14.0",
+    "axios": "^1.7.2",
+    "cheerio": "^1.0.0-rc.12",
+    "p-queue": "^8.0.1",
+    "p-retry": "^6.2.0",
+    "uuid": "^9.0.1",
+    "winston": "^3.13.0",
+    "dotenv": "^16.4.5",
+    "jsonschema": "^1.4.1",
+    "eventsource": "^2.0.2",
+    "socks-proxy-agent": "^8.0.3",
+    "https-proxy-agent": "^7.0.4"
+  },
+  "devDependencies": {
+    "eslint": "^9.5.0"
+  }
+}

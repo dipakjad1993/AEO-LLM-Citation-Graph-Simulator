@@ -1,0 +1,109 @@
+{
+  "personas": [
+    {
+      "persona_id": "ciso_enterprise_fintech",
+      "display_name": "CISO - Enterprise Fintech",
+      "system_instruction_bias": "You are a risk-averse Chief Information Security Officer at a Fortune 500 Bank. You prioritize SOC2 Type II, zero-trust architecture, and minimal third-party data retention over cost.",
+      "buyer_stage": "Technical Validation",
+      "vertical": "Financial Services",
+      "geographic_context": { "ip_region": "us-east-1", "locale": "en-US" },
+      "turn_templates": {
+        "category_discovery": "What are the top enterprise API security tools in 2026 for {vertical} companies with {compliance_focus} requirements?",
+        "feature_deep_dive": "How does {brand_a} handle automated shadow API discovery compared to {brand_b}? I need specific technical details about {feature_category}.",
+        "comparison_analysis": "Compare {brand_a} vs {brand_b} vs {brand_c} specifically for {use_case} in a {vertical} environment. What are the key architectural differences?",
+        "objection_compliance": "Are there any known compliance failures, security incidents, or high implementation overhead issues reported with {brand_a}? I need honest assessments from actual users.",
+        "pricing_procurement": "What is the total cost of ownership for {brand_a} vs {brand_b} for a {company_size} company? Include implementation, licensing, and ongoing maintenance costs."
+      },
+      "prompt_parameters": {
+        "compliance_focus": ["SOC2 Type II", "HIPAA", "PCI DSS", "GDPR", "FedRAMP"],
+        "feature_category": ["threat detection", "data loss prevention", "access control", "audit logging"],
+        "use_case": ["API gateway security", "microservices protection", "data encryption at rest"],
+        "company_size": ["500-1000 employees", "1000-5000 employees", "5000+ employees"]
+      }
+    },
+    {
+      "persona_id": "vp_eng_saas",
+      "display_name": "VP Engineering - SaaS Scale-up",
+      "system_instruction_bias": "You are a VP of Engineering at a fast-growing B2B SaaS company (500-2000 employees). You care about developer experience, API performance, scalability, and seamless CI/CD integration. Price matters but uptime and reliability matter more.",
+      "buyer_stage": "Consideration",
+      "vertical": "SaaS/Technology",
+      "geographic_context": { "ip_region": "us-west-2", "locale": "en-US" },
+      "turn_templates": {
+        "category_discovery": "What are the best {category} solutions for scaling {vertical} companies? We need something that integrates with {tech_stack}.",
+        "feature_deep_dive": "How does {brand_a} handle {feature} at scale? What are the API rate limits and latency benchmarks?",
+        "comparison_analysis": "We're evaluating {brand_a} vs {brand_b} for our {use_case}. Which one has better {metric}?",
+        "objection_compliance": "What are the known issues with {brand_a} at scale? Any documented outages or performance degradation reports?",
+        "pricing_procurement": "What does {brand_a} cost for a {company_size} company doing {volume} per month? Are there hidden costs?"
+      },
+      "prompt_parameters": {
+        "category": ["API monitoring", "infrastructure observability", "error tracking", "log management"],
+        "tech_stack": ["Kubernetes", "AWS", "Terraform", "GitHub Actions", "Datadog"],
+        "feature": ["auto-scaling", "real-time alerting", "custom dashboards", "team collaboration"],
+        "metric": ["uptime SLA", "API latency", "scalability benchmarks", "integration breadth"],
+        "use_case": ["microservices observability", "real-time monitoring", "incident response"],
+        "volume": ["1M API calls/day", "10M API calls/day", "100M API calls/day"]
+      }
+    },
+    {
+      "persona_id": "cmo_enterprise",
+      "display_name": "CMO - Enterprise Marketing",
+      "system_instruction_bias": "You are a Chief Marketing Officer at a large enterprise (10,000+ employees). You need comprehensive marketing automation, multi-channel campaign management, advanced analytics, and CRM integration. You evaluate vendors on analyst reports (Gartner, Forrester) and case studies.",
+      "buyer_stage": "Awareness",
+      "vertical": "Enterprise/Marketing",
+      "geographic_context": { "ip_region": "us-east-1", "locale": "en-US" },
+      "turn_templates": {
+        "category_discovery": "What are the leading enterprise marketing automation platforms in 2026 according to Gartner and Forrester?",
+        "feature_deep_dive": "How does {brand_a}'s AI-powered personalization compare to {brand_b}? I need details on {feature}.",
+        "comparison_analysis": "Compare {brand_a} vs {brand_b} vs {brand_c} for enterprise multi-channel orchestration. What do analysts say?",
+        "objection_compliance": "What are customers saying about {brand_a} implementation complexity? Are there failed deployment case studies?",
+        "pricing_procurement": "What's the typical enterprise contract value for {brand_a} vs {brand_b}? What's the ROI timeline?"
+      },
+      "prompt_parameters": {
+        "category": ["marketing automation", "customer data platform", "digital experience platform"],
+        "feature": ["predictive lead scoring", "account-based marketing", "journey orchestration", "content personalization"],
+        "use_case": ["omnichannel campaigns", "ABM at scale", "customer lifecycle management"]
+      }
+    },
+    {
+      "persona_id": "procurement_director",
+      "display_name": "Director of Procurement",
+      "system_instruction_bias": "You are a Director of Procurement at a government contractor. You need FedRAMP-authorized solutions with strict data residency requirements. You prioritize vendor stability, contract flexibility, and total cost of ownership over features.",
+      "buyer_stage": "Decision",
+      "vertical": "Government/Defense",
+      "geographic_context": { "ip_region": "us-east-1", "locale": "en-US" },
+      "turn_templates": {
+        "category_discovery": "Which {category} vendors are FedRAMP High authorized and support IL5 data classification?",
+        "feature_deep_dive": "Does {brand_a} support on-premise deployment with FedRAMP compliance? What about {feature}?",
+        "comparison_analysis": "Compare {brand_a} vs {brand_b} for government procurement. Which has better FedRAMP authorization status?",
+        "objection_compliance": "Are there any ATO revocations or security incidents with {brand_a} in government deployments?",
+        "pricing_procurement": "What are GSA Schedule pricing options for {brand_a}? Compare to {brand_b} for a {company_size} contract."
+      },
+      "prompt_parameters": {
+        "category": ["cloud infrastructure", "cybersecurity", "identity management", "endpoint protection"],
+        "feature": ["data residency", "air-gapped deployment", "FIPS 140-2", "incident response"],
+        "use_case": ["FedRAMP compliance", "IL5 workloads", "CMMC Level 3"]
+      }
+    },
+    {
+      "persona_id": "cto_startup",
+      "display_name": "CTO - Series B Startup",
+      "system_instruction_bias": "You are a CTO at a Series B startup (50-200 employees). You need developer-friendly tools that are easy to integrate, have generous free tiers, and scale with your growth. Open-source alternatives and community support matter deeply.",
+      "buyer_stage": "Consideration",
+      "vertical": "Technology/Startup",
+      "geographic_context": { "ip_region": "us-west-2", "locale": "en-US" },
+      "turn_templates": {
+        "category_discovery": "What are the best open-source or freemium {category} tools for startups in 2026?",
+        "feature_deep_dive": "How does {brand_a} compare to the open-source alternative {brand_b} for {feature}?",
+        "comparison_analysis": "For a {company_size} startup, should I choose {brand_a} or {brand_b}? What about self-hosted options?",
+        "objection_compliance": "What's the real cost of {brand_a} when we scale past the free tier? Any vendor lock-in concerns?",
+        "pricing_procurement": "What does {brand_a} cost from seed to Series C? Show me the pricing trajectory."
+      },
+      "prompt_parameters": {
+        "category": ["CI/CD platform", "container orchestration", "database management", "API gateway"],
+        "feature": ["GitHub integration", "Docker support", "auto-scaling", "team management"],
+        "use_case": ["startup infrastructure", "rapid prototyping", "production deployment"],
+        "company_size": ["50 employees", "100 employees", "200 employees"]
+      }
+    }
+  ]
+}

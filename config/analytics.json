@@ -1,0 +1,70 @@
+{
+  "analytics": {
+    "nlp": {
+      "spacy_model": "en_core_web_trf",
+      "fallback_model": "en_core_web_sm",
+      "sentence_transformer": "all-mpnet-base-v2",
+      "chunk_size": 512,
+      "chunk_overlap": 50,
+      "batch_size": 32
+    },
+    "graph": {
+      "directed": true,
+      "min_edge_weight": 2,
+      "centrality_algorithms": [
+        "in_degree",
+        "out_degree",
+        "betweenness",
+        "pagerank",
+        "eigenvector",
+        "katz"
+      ],
+      "community_detection": "louvain",
+      "max_graph_nodes": 10000,
+      "edge_weight_decay": 0.95,
+      "temporal_window_days": 90
+    },
+    "sentiment": {
+      "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+      "positive_threshold": 0.6,
+      "negative_threshold": 0.4,
+      "neutral_band": [0.4, 0.6]
+    },
+    "triple_extraction": {
+      "method": "spacy_dependency",
+      "min_confidence": 0.7,
+      "max_triples_per_sentence": 5,
+      "negation_detection": true,
+      "coreference_resolution": true
+    },
+    "embedding": {
+      "model": "all-mpnet-base-v2",
+      "dimension": 768,
+      "normalize": true,
+      "batch_size": 64,
+      "cache_embeddings": true,
+      "similarity_threshold": 0.3
+    },
+    "anomaly_detection": {
+      "algorithm": "hdbscan",
+      "min_cluster_size": 5,
+      "min_samples": 3,
+      "contamination": 0.1
+    }
+  },
+  "output": {
+    "formats": ["json", "csv", "html", "pdf"],
+    "dashboard": {
+      "template": "enterprise",
+      "theme": "dark",
+      "interactive": true,
+      "export_charts": true
+    },
+    "reports": {
+      "executive_summary": true,
+      "detailed_analysis": true,
+      "actionable_recommendations": true,
+      "cost_analysis": true
+    }
+  }
+}

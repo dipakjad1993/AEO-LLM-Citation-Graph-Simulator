@@ -1,0 +1,82 @@
+{
+  "execution": {
+    "mode": "hybrid",
+    "description": "hybrid = 85% API + 15% Playwright. api_only = 100% API. playwright_only = 100% Playwright.",
+    "modes": ["hybrid", "api_only", "playwright_only"],
+    "playwright_sample_rate": 0.15,
+    "max_concurrent_api": 10,
+    "max_concurrent_playwright": 3,
+    "request_timeout_ms": 120000,
+    "retry": {
+      "attempts": 3,
+      "delay_ms": 2000,
+      "backoff_multiplier": 2.0,
+      "max_delay_ms": 30000
+    },
+    "rate_limiting": {
+      "openai": { "rpm": 500, "tpm": 200000 },
+      "anthropic": { "rpm": 1000, "tpm": 100000 },
+      "google": { "rpm": 60, "tpm": 32000 },
+      "perplexity": { "rpm": 200, "tpm": 200000 },
+      "deepseek": { "rpm": 1000, "tpm": 100000 }
+    },
+    "cost_tracking": {
+      "enabled": true,
+      "daily_budget_usd": 500.0,
+      "alert_threshold_pct": 80,
+      "track_per_model": true,
+      "track_per_persona": true
+    },
+    "session_management": {
+      "persist_cookies": true,
+      "session_dir": "./data/sessions",
+      "max_session_age_hours": 24
+    },
+    "playwright": {
+      "headless": true,
+      "stealth_mode": true,
+      "proxy": {
+        "enabled": false,
+        "server": "",
+        "username": "",
+        "password": ""
+      },
+      "browser_args": [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage"
+      ],
+      "viewport": { "width": 1920, "height": 1080 },
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    }
+  },
+  "multi_turn": {
+    "enabled": true,
+    "min_turns": 3,
+    "max_turns": 5,
+    "turn_types": [
+      "category_discovery",
+      "feature_deep_dive",
+      "comparison_analysis",
+      "objection_compliance",
+      "pricing_procurement"
+    ],
+    "citation_decay_tracking": true,
+    "session_state_persistence": true
+  },
+  "attribution_split": {
+    "enabled": true,
+    "description": "Run each prompt twice: once with RAG/web search ON, once OFF to measure pre-training vs retrieval attribution",
+    "rag_enabled_model_override": {
+      "openai": "gpt-4o",
+      "perplexity": "sonar-pro"
+    },
+    "rag_disabled_fallback": {
+      "openai": "gpt-4o",
+      "anthropic": "claude-3-5-sonnet",
+      "google": "gemini-1.5-pro",
+      "deepseek": "deepseek-chat"
+    }
+  }
+}
