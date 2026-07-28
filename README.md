@@ -67,7 +67,7 @@ Traditional SEO tools track Google rankings. **No tool tracks AI rankings.** Thi
 4. It builds citation graphs showing which sources LLMs trust
 5. It generates a comprehensive report with prioritized recommendations
 
-![Landing Page](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/landing-hero.png)
+![Landing Page](screenshots/landing-hero.png)
 
 ---
 
@@ -176,7 +176,7 @@ Generates a prioritized action list based on all analysis modules.
 - Business impact estimation
 - 4-phase implementation roadmap (Emergency, Foundation, Growth, Excellence)
 
-![Dashboard Overview](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/dashboard-overview.png)
+![Dashboard Overview](screenshots/dashboard-overview.png)
 
 ---
 
@@ -303,7 +303,7 @@ The analysis runs as an 8-stage pipeline, each stage building on the previous:
 - Business impact estimates
 - Competitive gap remediation
 
-![Pipeline Stages](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/pipeline-stages.png)
+![Pipeline Stages](screenshots/pipeline-stages.png)
 
 ---
 
@@ -324,7 +324,7 @@ The dashboard generates 9 detailed analysis sections, plus an executive summary:
 | 9 | **Strategic Recommendations** | Prioritized actions, business impact, implementation roadmap |
 | S | **Strategic Summary** | Consolidated health score, 4-phase action plan |
 
-![Report Sections](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/report-sections.png)
+![Report Sections](screenshots/report-sections.png)
 
 ---
 
@@ -562,7 +562,7 @@ The dashboard presents 9+ analysis sections:
 - The PDF includes all sections with charts captured as images
 - Share with leadership, agencies, or team members
 
-![Usage Flow](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/usage-flow.png)
+![Usage Flow](screenshots/usage-flow.png)
 
 ---
 
@@ -621,7 +621,7 @@ The exported PDF includes:
 - Tables and KPI cards
 - Recommendations and strategic summary
 
-![PDF Export](https://github.com/dipakjad1993/AEO-LLM-Citation-Graph-Simulator/raw/main/screenshots/pdf-export.png)
+![PDF Export](screenshots/pdf-export.png)
 
 ---
 
