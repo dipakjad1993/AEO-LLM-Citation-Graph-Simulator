@@ -13,6 +13,7 @@ const DATA_DIR = path.join(ROOT, 'data');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const OUTPUT_DIR = path.join(DATA_DIR, 'output');
 const LOG_DIR = path.join(ROOT, 'logs');
+const CONFIG_INPUTS_FILE = path.join(DATA_DIR, 'system_inputs.json');
 
 [UPLOAD_DIR, OUTPUT_DIR, LOG_DIR].forEach(d => fs.mkdirSync(d, { recursive: true }));
 
@@ -123,10 +124,24 @@ function parseMultipart(buffer, boundary) {
   return parts;
 }
 
+function findLatestOrchestratorResults() {
+  if (!fs.existsSync(OUTPUT_DIR)) return null;
+  const dirs = fs.readdirSync(OUTPUT_DIR)
+    .filter(d => d.startsWith('run_'))
+    .sort()
+    .reverse();
+  for (const d of dirs) {
+    const resultsPath = path.join(OUTPUT_DIR, d, 'extracted_data', 'all_results.json');
+    if (fs.existsSync(resultsPath)) return resultsPath;
+  }
+  return null;
+}
+
 function assembleDataForAnalysis(runDir) {
   const extractedDir = path.join(runDir, 'extracted_data');
   fs.mkdirSync(extractedDir, { recursive: true });
   let dataReady = false;
+  let dataSource = 'orchestrator_run';
 
   // 1. Check uploaded results
   const resultsUploadDir = path.join(UPLOAD_DIR, 'results');
@@ -136,21 +151,23 @@ function assembleDataForAnalysis(runDir) {
       const src = path.join(resultsUploadDir, rFiles[rFiles.length - 1]);
       fs.copyFileSync(src, path.join(extractedDir, 'all_results.json'));
       dataReady = true;
+      dataSource = 'uploaded_results';
       log(`Using uploaded results: ${rFiles[rFiles.length - 1]}`);
     }
   }
 
-  // 2. Check demo data
+  // 1b. Fall back to the most recent real orchestrator run
   if (!dataReady) {
-    const demoPath = path.join(OUTPUT_DIR, 'run_demo_001', 'extracted_data', 'all_results.json');
-    if (fs.existsSync(demoPath)) {
-      fs.copyFileSync(demoPath, path.join(extractedDir, 'all_results.json'));
+    const latestRun = findLatestOrchestratorResults();
+    if (latestRun) {
+      fs.copyFileSync(latestRun, path.join(extractedDir, 'all_results.json'));
       dataReady = true;
-      log('Using demo/sample data');
+      dataSource = 'orchestrator_run';
+      log(`Using latest orchestrator run: ${latestRun}`);
     }
   }
 
-  // 3. Copy uploaded prompts/entities/corpus/system_config as supplementary config
+  // 2. Copy uploaded prompts/entities/corpus/system_config as supplementary config
   for (const section of ['prompts', 'entities', 'corpus', 'system_config']) {
     const secDir = path.join(UPLOAD_DIR, section);
     if (fs.existsSync(secDir)) {
@@ -164,12 +181,17 @@ function assembleDataForAnalysis(runDir) {
   }
 
   // Write data source metadata
-  const hasUploads = fs.readdirSync(UPLOAD_DIR).some(sec => {
-    const secDir = path.join(UPLOAD_DIR, sec);
-    return fs.existsSync(secDir) && fs.readdirSync(secDir).length > 0;
-  });
+  let hasUploads = false;
+  if (fs.existsSync(UPLOAD_DIR)) {
+    try {
+      hasUploads = fs.readdirSync(UPLOAD_DIR).some(sec => {
+        const secDir = path.join(UPLOAD_DIR, sec);
+        return fs.existsSync(secDir) && fs.readdirSync(secDir).length > 0;
+      });
+    } catch {}
+  }
   const metadata = {
-    dataSource: hasUploads ? 'uploaded_prompts' : 'synthetic_sample',
+    dataSource,
     generatedAt: new Date().toISOString(),
     hasUploads
   };
@@ -223,29 +245,41 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // System inputs (config) - GET
+    if (url.pathname === '/api/config' && req.method === 'GET') {
+      let data = {};
+      if (fs.existsSync(CONFIG_INPUTS_FILE)) {
+        try { data = JSON.parse(fs.readFileSync(CONFIG_INPUTS_FILE, 'utf8')); } catch (e) { log(`Config read error: ${e.message}`); }
+      }
+      jsonRes(res, 200, { success: true, config: data });
+      return;
+    }
+
+    // System inputs (config) - POST
+    if (url.pathname === '/api/config' && req.method === 'POST') {
+      const body = await readBody(req);
+      try {
+        const data = JSON.parse(body.toString('utf8'));
+        fs.mkdirSync(path.dirname(CONFIG_INPUTS_FILE), { recursive: true });
+        fs.writeFileSync(CONFIG_INPUTS_FILE, JSON.stringify(data, null, 2));
+        // Mirror into uploads/system_config so orchestrator/analysis can consume it
+        const sysDir = path.join(UPLOAD_DIR, 'system_config');
+        fs.mkdirSync(sysDir, { recursive: true });
+        fs.writeFileSync(path.join(sysDir, 'system_inputs.json'), JSON.stringify(data, null, 2));
+        log('Saved system inputs config');
+        jsonRes(res, 200, { success: true });
+      } catch (e) {
+        jsonRes(res, 400, { error: `Invalid JSON: ${e.message}` });
+      }
+      return;
+    }
+
     // Delete upload
     if (url.pathname.startsWith('/api/upload/') && req.method === 'DELETE') {
       const parts = url.pathname.split('/');
       const fp = path.join(UPLOAD_DIR, parts[3], parts[4]);
       if (fs.existsSync(fp)) { fs.unlinkSync(fp); jsonRes(res, 200, { success: true }); }
       else jsonRes(res, 404, { error: 'Not found' });
-      return;
-    }
-
-    // Generate sample data
-    if (url.pathname === '/api/sample' && req.method === 'POST') {
-      log('Generating sample data...');
-      const script = path.join(ROOT, 'src', 'python-engine', 'generate_sample_data.py');
-      const child = spawn(PYTHON, [q(script)], { cwd: ROOT, env: { ...process.env, PYTHONUNBUFFERED: '1' }, shell: true });
-      let out = '', err = '';
-      child.stdout.on('data', d => out += d.toString());
-      child.stderr.on('data', d => err += d.toString());
-      child.on('error', e => { log('Sample gen error: ' + e.message); jsonRes(res, 500, { error: e.message }); });
-      child.on('close', code => {
-        log(`Sample gen exit: ${code}`);
-        if (code === 0) jsonRes(res, 200, { success: true, output: out });
-        else jsonRes(res, 500, { error: err || out || 'Failed' });
-      });
       return;
     }
 
@@ -265,7 +299,7 @@ const server = http.createServer(async (req, res) => {
       const dataReady = assembleDataForAnalysis(runDir);
 
       if (!dataReady) {
-        jsonRes(res, 400, { error: 'No data to analyze. Upload results JSON or generate sample data first.' });
+        jsonRes(res, 400, { error: 'No data to analyze. Run the orchestrator first (node src/node-orchestrator/index.js) or upload real results JSON.' });
         return;
       }
 
@@ -282,7 +316,7 @@ const server = http.createServer(async (req, res) => {
       procs[procId] = {
         child, runDir, runId: path.basename(runDir),
         status: 'running', output: '', errOutput: '',
-        startTime: Date.now(), progress: { stage: 'Starting', stageNum: 0, totalStages: 8 }
+        startTime: Date.now(), progress: { stage: 'Starting', stageNum: 0, totalStages: 10 }
       };
 
       child.stdout.on('data', d => {
@@ -314,7 +348,7 @@ const server = http.createServer(async (req, res) => {
         procs[procId].status = code === 0 ? 'completed' : 'failed';
         procs[procId].exitCode = code;
         procs[procId].elapsed = elapsed;
-        procs[procId].progress = { stage: code === 0 ? 'Complete' : 'Failed', stageNum: 8, totalStages: 8 };
+        procs[procId].progress = { stage: code === 0 ? 'Complete' : 'Failed', stageNum: 10, totalStages: 10 };
         // Find the analysis dir that was created during this run
         if (code === 0) {
           const analysisDir = findAnalysisForRun(procs[procId].startTime);
@@ -336,7 +370,7 @@ const server = http.createServer(async (req, res) => {
           status: p.status, exitCode: p.exitCode, runId: p.runId,
           output: p.output.slice(-8000), error: p.errOutput.slice(-4000),
           elapsed: p.elapsed || ((Date.now() - p.startTime) / 1000).toFixed(1),
-          progress: p.progress || { stage: 'Unknown', stageNum: 0, totalStages: 8 }
+          progress: p.progress || { stage: 'Unknown', stageNum: 0, totalStages: 10 }
         });
       } else jsonRes(res, 404, { error: 'Not found' });
       return;
@@ -348,16 +382,15 @@ const server = http.createServer(async (req, res) => {
         .filter(([, p]) => p.status === 'completed' && p.analysisDir)
         .sort(([, a], [, b]) => b.startTime - a.startTime);
       if (!sorted.length) { jsonRes(res, 200, { hasData: false }); return; }
-      const analysisPath = sorted[0][1].analysisDir;
+      const [procId, proc] = sorted[0];
+      const analysisPath = proc.analysisDir;
       const result = { hasData: true, analysisDir: path.basename(analysisPath) };
       const sp = path.join(analysisPath, 'pipeline_summary.json');
       if (fs.existsSync(sp)) result.summary = JSON.parse(fs.readFileSync(sp, 'utf8'));
       const dp = path.join(analysisPath, 'dashboard', 'aeo_dashboard.html');
       if (fs.existsSync(dp)) result.dashboardHtml = fs.readFileSync(dp, 'utf8');
-      // Check data source metadata
-      const metaPath = path.join(analysisPath, '..', 'data_source.json');
-      const runDirPath = path.dirname(analysisPath);
-      const dsPath = path.join(runDirPath, 'data_source.json');
+      // Check data source metadata — stored in the run dir this proc consumed
+      const dsPath = path.join(proc.runDir, 'data_source.json');
       if (fs.existsSync(dsPath)) {
         try { result.dataSource = JSON.parse(fs.readFileSync(dsPath, 'utf8')); } catch {}
       }

@@ -16,6 +16,10 @@ env/
 data/output/
 data/uploads/
 data/sessions/
+
+# Saved enterprise inputs (contains proxy credentials)
+data/system_inputs.json
+
 logs/
 
 # IDE

@@ -26,30 +26,45 @@ export class OpenAIProvider {
     const response = await this.client.chat.completions.create(requestBody);
 
     const choice = response.choices?.[0];
-    const rawCitations = [];
+    const message = choice?.message || {};
+    const rawText = extractOpenAIContent(message);
 
-    if (choice?.message?.tool_calls) {
-      for (const toolCall of choice.message.tool_calls) {
-        if (toolCall.type === 'web_search') {
-          const searchData = JSON.parse(toolCall.function.arguments || '{}');
-          if (searchData.results) {
-            for (const result of searchData.results) {
-              rawCitations.push({
-                url: result.url,
-                title: result.title,
-                snippet: result.snippet
-              });
-            }
+    // web_search_preview returns grounded citations as message.annotations[] with
+    // { type: 'url_citation', url, title }. Legacy responses may also surface
+    // search tool_calls. Both are captured here.
+    const rawCitations = [];
+    for (const annotation of message.annotations || []) {
+      if (annotation?.type === 'url_citation' && annotation.url) {
+        rawCitations.push({
+          url: annotation.url,
+          title: annotation.title || null,
+          snippet: null
+        });
+      }
+    }
+    for (const toolCall of message.tool_calls || []) {
+      if (toolCall.type === 'web_search') {
+        try {
+          const searchData = JSON.parse(toolCall.function?.arguments || '{}');
+          for (const result of searchData.results || []) {
+            rawCitations.push({
+              url: result.url,
+              title: result.title,
+              snippet: result.snippet
+            });
           }
+        } catch {
+          // malformed search arguments: ignore, response content is still valid
         }
       }
     }
 
     return {
-      raw_text: choice?.message?.content || '',
+      raw_text: rawText,
       model: response.model,
       usage: response.usage,
       finish_reason: choice?.finish_reason,
+      refusal: message.refusal || null,
       citations: rawCitations,
       search_performed: search_enabled || false,
       raw_response: response
@@ -80,9 +95,10 @@ export class OpenAIProvider {
 
     for await (const chunk of stream) {
       const delta = chunk.choices?.[0]?.delta;
-      if (delta?.content) {
-        fullContent += delta.content;
-        yield { type: 'content', data: delta.content };
+      const part = extractOpenAIDelta(delta);
+      if (part) {
+        fullContent += part;
+        yield { type: 'content', data: part };
       }
       if (chunk.usage) {
         usage = chunk.usage;
@@ -91,4 +107,22 @@ export class OpenAIProvider {
 
     yield { type: 'done', data: { fullContent, usage } };
   }
+}
+
+function extractOpenAIContent(message) {
+  const content = message?.content;
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(p => p?.type === 'output_text' || p?.type === 'text')
+      .map(p => p.text || '')
+      .join('');
+  }
+  return '';
+}
+
+function extractOpenAIDelta(delta) {
+  const content = delta?.content;
+  if (typeof content === 'string') return content;
+  return '';
 }

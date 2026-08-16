@@ -4,9 +4,13 @@
     "description": "hybrid = 85% API + 15% Playwright. api_only = 100% API. playwright_only = 100% Playwright.",
     "modes": ["hybrid", "api_only", "playwright_only"],
     "playwright_sample_rate": 0.15,
+    "prompt_count": 50,
     "max_concurrent_api": 10,
     "max_concurrent_playwright": 3,
     "request_timeout_ms": 120000,
+    "temperature": 0.15,
+    "top_p": 0.9,
+    "max_tokens": 4096,
     "retry": {
       "attempts": 3,
       "delay_ms": 2000,
@@ -26,6 +30,15 @@
       "alert_threshold_pct": 80,
       "track_per_model": true,
       "track_per_persona": true
+    },
+    "verification": {
+      "enabled": true,
+      "description": "Quality gates, credibility scoring, and live citation URL verification for every response",
+      "citation_http_check": true,
+      "citation_concurrency": 8,
+      "citation_timeout_ms": 15000,
+      "reject_failed_quality": false,
+      "require_verified_citations": false
     },
     "session_management": {
       "persist_cookies": true,

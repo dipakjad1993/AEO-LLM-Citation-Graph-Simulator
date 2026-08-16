@@ -14,8 +14,18 @@ import { DeepSeekProvider } from './providers/deepseek.js';
 import { PlaywrightScraper } from './scrapers/playwrightScraper.js';
 import { PromptGenerator } from './utils/promptGenerator.js';
 import { ResponseExtractor } from './utils/responseExtractor.js';
-import { CostTracker } from './utils/costTracker.js';
+import { CostTracker, BudgetExceededError } from './utils/costTracker.js';
 import { RateLimiter } from './utils/rateLimiter.js';
+import { ResponseVerifier } from './utils/responseVerifier.js';
+import { validateAllConfigs, ConfigError } from '../../config/validator.js';
+import {
+  buildResultProvenance,
+  buildRunManifest,
+  writeManifest,
+  appendAuditEntry,
+  persistRawResponse,
+  randomRunId
+} from './utils/provenance.js';
 
 dotenv.config();
 
@@ -53,13 +63,18 @@ class AEOOrchestrator {
     this.promptGenerator = new PromptGenerator(this.config);
     this.responseExtractor = new ResponseExtractor();
     this.costTracker = new CostTracker(this.config);
+    this.responseVerifier = new ResponseVerifier(this.config, {
+      online: this.config.execution?.verification?.citation_http_check !== false,
+      concurrency: this.config.execution?.verification?.citation_concurrency || 8
+    });
     this.rateLimiters = {};
     this.apiQueue = new PQueue({ concurrency: this.config.execution.max_concurrent_api });
     this.playwrightQueue = new PQueue({ concurrency: this.config.execution.max_concurrent_playwright });
     this.results = [];
     this.sessionId = uuidv4();
+    this.runId = randomRunId();
     this.startTime = null;
-    this.runDir = join(ROOT_DIR, 'data', 'output', `run_${this.sessionId}`);
+    this.runDir = join(ROOT_DIR, 'data', 'output', `run_${Date.now()}_${this.runId}`);
 
     this.ensureDirectories();
   }
@@ -73,6 +88,16 @@ class AEOOrchestrator {
       entityMaps: JSON.parse(readFileSync(join(configPath, 'entity_maps.json'), 'utf8')),
       analytics: JSON.parse(readFileSync(join(configPath, 'analytics.json'), 'utf8'))
     };
+
+    // Allow environment overrides for execution parameters.
+    const envOverrides = {};
+    if (process.env.TEMPERATURE) envOverrides.temperature = parseFloat(process.env.TEMPERATURE);
+    if (process.env.TOP_P) envOverrides.top_p = parseFloat(process.env.TOP_P);
+    if (process.env.MAX_TOKENS) envOverrides.max_tokens = parseInt(process.env.MAX_TOKENS, 10);
+    if (process.env.MAX_CONCURRENT_REQUESTS) envOverrides.max_concurrent_api = parseInt(process.env.MAX_CONCURRENT_REQUESTS, 10);
+    if (Object.keys(envOverrides).length) {
+      baseConfig.execution = { ...baseConfig.execution, ...envOverrides };
+    }
 
     return this.deepMerge(baseConfig, overrides);
   }
@@ -104,7 +129,27 @@ class AEOOrchestrator {
   }
 
   async initialize() {
-    logger.info('Initializing AEO Orchestrator', { sessionId: this.sessionId });
+    logger.info('Initializing AEO Orchestrator', { sessionId: this.sessionId, runId: this.runId });
+
+    try {
+      validateAllConfigs({ env: process.env, requireKeys: true });
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        const detail = err.errors.join('; ');
+        logger.error('Configuration validation failed', { errors: err.errors });
+        throw new Error(`FATAL: ${detail}`);
+      }
+      throw err;
+    }
+
+    const entityConfig = this.config.entityMaps;
+    const yourBrand = entityConfig?.entity_maps?.your_brand;
+    if (!yourBrand || !yourBrand.primary_name) {
+      throw new Error('FATAL: No primary brand configured. Fill in config/entity_maps.json with your_brand.primary_name before running.');
+    }
+    if (!entityConfig?.entity_maps?.competitors || entityConfig.entity_maps.competitors.length === 0) {
+      throw new Error('FATAL: No competitors configured. Add at least one competitor to config/entity_maps.json.');
+    }
 
     const apiKeyMap = {
       openai: process.env.OPENAI_API_KEY,
@@ -113,6 +158,11 @@ class AEOOrchestrator {
       perplexity: process.env.PERPLEXITY_API_KEY,
       deepseek: process.env.DEEPSEEK_API_KEY
     };
+
+    const hasAnyKey = Object.values(apiKeyMap).some(k => k && !k.startsWith('your-') && !k.startsWith('sk-your-') && !k.startsWith('sk-ant-your-') && !k.startsWith('pplx-your-'));
+    if (!hasAnyKey) {
+      throw new Error('FATAL: No valid API keys found. Set at least one of OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY, PERPLEXITY_API_KEY, or DEEPSEEK_API_KEY in your .env file.');
+    }
 
     if (apiKeyMap.openai) {
       this.providers.openai = new OpenAIProvider(apiKeyMap.openai, this.config);
@@ -163,9 +213,10 @@ class AEOOrchestrator {
   async run(options = {}) {
     this.startTime = Date.now();
     logger.info('Starting AEO simulation run', { sessionId: this.sessionId });
+    this.modelFilter = Array.isArray(options.models) ? new Set(options.models) : null;
 
     const prompts = await this.promptGenerator.generateAllPrompts(
-      options.promptCount || 5000,
+      options.promptCount || this.config.execution.prompt_count || 50,
       options.personas || undefined
     );
     logger.info(`Generated ${prompts.length} multi-turn prompt sessions`);
@@ -175,12 +226,29 @@ class AEOOrchestrator {
 
     const results = await this.executePlan(executionPlan);
 
-    await this.saveResults(results);
+    // Verification layer: quality gates + citation HTTP verification.
+    logger.info('Running response verification (quality gates + citation checks)');
+    await this.responseVerifier.run(results);
+    const verificationSummary = this.responseVerifier.summary();
+    logger.info('Verification complete', verificationSummary);
+
+    // Enforce quality gates: optionally demote failed-quality responses.
+    if (this.config.execution?.verification?.reject_failed_quality) {
+      for (const item of results) {
+        const v = item.result?.verification;
+        if (v && v.quality && !v.quality.passed && item.status === 'fulfilled') {
+          item.status = 'rejected';
+          item.error = `Quality gate failed: ${JSON.stringify(v.quality.checks)}`;
+        }
+      }
+    }
+
+    await this.saveResults(results, verificationSummary);
 
     const summary = this.generateRunSummary(results);
     logger.info('Run complete', summary);
 
-    return { sessionId: this.sessionId, results, summary, runDir: this.runDir };
+    return { sessionId: this.sessionId, results, summary, runDir: this.runDir, verification: verificationSummary };
   }
 
   buildExecutionPlan(prompts) {
@@ -189,7 +257,8 @@ class AEOOrchestrator {
     const playwrightSampleRate = this.config.execution.playwright_sample_rate;
 
     for (const promptSession of prompts) {
-      const shouldUsePlaywright = mode !== 'api_only' && Math.random() < playwrightSampleRate;
+      const shouldUsePlaywright = mode !== 'api_only' && this.playwrightScraper && Math.random() < playwrightSampleRate;
+      // Full, deterministic coverage: every configured API model answers every prompt.
       const models = this.selectModelsForPrompt(promptSession);
 
       for (const turn of promptSession.turns) {
@@ -203,12 +272,12 @@ class AEOOrchestrator {
             turn: turn,
             modelId: modelId,
             provider: provider,
-            usePlaywright: shouldUsePlaywright && this.playwrightScraper,
+            usePlaywright: shouldUsePlaywright,
             ragEnabled: true,
             priority: turn.turnIndex === 0 ? 'high' : 'normal'
           });
 
-          if (this.config.attribution_split?.enabled && turn.turnIndex === 0) {
+          if (this.config.execution?.attribution_split?.enabled && turn.turnIndex === 0) {
             plan.push({
               executionId: uuidv4(),
               promptSession: promptSession,
@@ -233,16 +302,17 @@ class AEOOrchestrator {
 
     for (const [providerName, providerModels] of Object.entries(modelsConfig)) {
       for (const [modelId, modelConfig] of Object.entries(providerModels)) {
-        if (this.providers[providerName]) {
+        if (this.providers[providerName] && (!this.modelFilter || this.modelFilter.has(modelId))) {
           allModelIds.push(modelId);
         }
       }
     }
 
-    if (this.config.execution.playwright_sample_rate < 1) {
-      return allModelIds.filter(() => Math.random() >= this.config.execution.playwright_sample_rate * 0.5);
-    }
-
+    // NOTE: no random model dropping. Every configured provider/model is queried
+    // for every prompt to guarantee complete, reproducible coverage. Randomly
+    // dropping models corrupts coverage and produced incomplete datasets in the
+    // past. Playwright browser sampling (prompt-level) is the only stochastic
+    // element, and it does not drop real API models.
     return allModelIds;
   }
 
@@ -261,27 +331,15 @@ class AEOOrchestrator {
     const batchedPlan = this.batchByPriority(plan);
 
     for (const batch of batchedPlan) {
-      if (batch.priority === 'high') {
-        const batchResults = await Promise.allSettled(
-          batch.tasks.map(task => this.executeTask(task))
-        );
-        results.push(...batchResults.map((r, i) => ({
-          ...batch.tasks[i],
-          result: r.status === 'fulfilled' ? r.value : null,
-          error: r.status === 'rejected' ? r.reason?.message : null,
-          status: r.status
-        })));
-      } else {
-        const batchResults = await Promise.allSettled(
-          batch.tasks.map(task => this.executeTask(task))
-        );
-        results.push(...batchResults.map((r, i) => ({
-          ...batch.tasks[i],
-          result: r.status === 'fulfilled' ? r.value : null,
-          error: r.status === 'rejected' ? r.reason?.message : null,
-          status: r.status
-        })));
-      }
+      const batchResults = await Promise.allSettled(
+        batch.tasks.map(task => this.executeTask(task))
+      );
+      results.push(...batchResults.map((r, i) => ({
+        ...batch.tasks[i],
+        result: r.status === 'fulfilled' ? r.value : null,
+        error: r.status === 'rejected' ? (r.reason?.message || String(r.reason)) : null,
+        status: r.status
+      })));
     }
 
     return results;
@@ -322,8 +380,11 @@ class AEOOrchestrator {
       });
     } else {
       response = await this.apiQueue.add(async () => {
-        await this.rateLimiters[provider.name]?.waitForSlot();
-        return await this.retryWithBackoff(async () => {
+        // Hard budget enforcement: stop making paid API calls once the cap is hit.
+        this.costTracker.enforceBudget();
+
+        await this.rateLimiters[provider.name]?.waitForSlot({ inputTokens: 0, outputTokens: 0 });
+        const apiResponse = await this.retryWithBackoff(async () => {
           return await provider.instance.chat(messages, {
             model: modelConfig.model_id,
             temperature,
@@ -334,6 +395,13 @@ class AEOOrchestrator {
             stream: false
           });
         });
+
+        // Track tokens for TPM enforcement.
+        const usage = apiResponse.usage || {};
+        const inputTokens = usage.prompt_tokens || usage.input_tokens || 0;
+        const outputTokens = usage.completion_tokens || usage.output_tokens || 0;
+        this.rateLimiters[provider.name]?.trackTokens(inputTokens + outputTokens);
+        return apiResponse;
       });
     }
 
@@ -342,7 +410,8 @@ class AEOOrchestrator {
       turnIndex: turn.turnIndex,
       executionId,
       ragEnabled,
-      promptSession
+      promptSession,
+      entityConfig: this.config.entityMaps
     });
 
     this.costTracker.track(modelConfig, response);
@@ -400,22 +469,54 @@ class AEOOrchestrator {
     throw lastError;
   }
 
-  async saveResults(results) {
+  async saveResults(results, verificationSummary) {
     const outputPath = join(this.runDir, 'extracted_data', 'all_results.json');
     const processedResults = results.map(r => ({
       executionId: r.executionId,
       promptSessionId: r.promptSession?.sessionId,
       personaId: r.promptSession?.personaId,
       modelId: r.modelId,
+      provider: r.provider?.name,
       turnIndex: r.turn?.turnIndex,
       turnType: r.turn?.turnType,
       prompt: r.turn?.prompt,
       ragEnabled: r.ragEnabled,
+      channel: r.usePlaywright ? 'web_ui' : 'api',
+      hidden_search_queries: r.result?.hidden_search_queries || [],
+      search_performed: r.result?.search_performed || false,
       result: r.result,
       error: r.error,
       status: r.status,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      provenance: r.result?.raw_text ? buildResultProvenance({
+        result: {
+          raw_text: r.result.raw_text,
+          modelId: r.modelId,
+          provider: r.provider?.name,
+          prompt: r.turn?.prompt,
+          timestamp: new Date().toISOString(),
+          verification: r.result.verification,
+          citations: r.result.citations
+        },
+        config: this.config,
+        sessionId: this.sessionId
+      }) : null
     }));
+
+    // Persist raw provider responses for audit.
+    for (const r of results) {
+      if (r.result?.raw_response) {
+        try {
+          persistRawResponse(this.runDir, {
+            executionId: r.executionId,
+            provider: r.provider?.name,
+            raw: r.result.raw_response
+          });
+        } catch (err) {
+          logger.warn('Failed to persist raw response', { executionId: r.executionId, error: err.message });
+        }
+      }
+    }
 
     writeFileSync(outputPath, JSON.stringify(processedResults, null, 2));
     logger.info(`Results saved to ${outputPath}`, { totalResults: results.length });
@@ -424,15 +525,54 @@ class AEOOrchestrator {
     const costPath = join(this.runDir, 'extracted_data', 'cost_report.json');
     writeFileSync(costPath, JSON.stringify(costReport, null, 2));
 
-    const metadataPath = join(this.runDir, 'run_metadata.json');
-    writeFileSync(metadataPath, JSON.stringify({
+    // Immutable run manifest with content hashes for tamper evidence.
+    const endTime = Date.now();
+    const manifest = buildRunManifest({
+      runDir: this.runDir,
+      config: this.config,
       sessionId: this.sessionId,
       startTime: this.startTime,
-      endTime: Date.now(),
-      duration: Date.now() - this.startTime,
+      endTime,
+      results
+    });
+    const manifestPath = writeManifest(this.runDir, manifest);
+    logger.info(`Run manifest written to ${manifestPath} (id: ${manifest.manifest_id})`);
+
+    // Verification report.
+    writeFileSync(join(this.runDir, 'extracted_data', 'verification_report.json'),
+      JSON.stringify({
+        summary: verificationSummary,
+        per_response: this.responseVerifier.results
+      }, null, 2));
+
+    // Append-only audit trail entry.
+    appendAuditEntry(join(ROOT_DIR, 'logs'), {
+      event: 'run_completed',
+      sessionId: this.sessionId,
+      runId: this.runId,
+      runDir: this.runDir,
+      manifestId: manifest.manifest_id,
+      configHash: manifest.config_hash,
       totalTasks: results.length,
       successful: results.filter(r => r.status === 'fulfilled').length,
       failed: results.filter(r => r.status === 'rejected').length,
+      totalCost: costReport.totalCost,
+      verification: verificationSummary
+    });
+
+    const metadataPath = join(this.runDir, 'run_metadata.json');
+    writeFileSync(metadataPath, JSON.stringify({
+      sessionId: this.sessionId,
+      runId: this.runId,
+      toolVersion: manifest.tool_version,
+      startTime: this.startTime,
+      endTime,
+      duration: endTime - this.startTime,
+      totalTasks: results.length,
+      successful: results.filter(r => r.status === 'fulfilled').length,
+      failed: results.filter(r => r.status === 'rejected').length,
+      manifestId: manifest.manifest_id,
+      verification: verificationSummary,
       costReport
     }, null, 2));
   }
@@ -453,6 +593,7 @@ class AEOOrchestrator {
       costPerQuery: costReport.totalCost / (successful.length || 1),
       modelsUsed: [...new Set(results.map(r => r.modelId))],
       personasUsed: [...new Set(results.map(r => r.promptSession?.personaId))],
+      verification: this.responseVerifier.summary(),
       runDirectory: this.runDir
     };
   }
@@ -471,7 +612,15 @@ async function main() {
   const mode = modeIndex !== -1 ? args[modeIndex + 1] : 'orchestrate';
 
   const promptCountIndex = args.indexOf('--prompts');
-  const promptCount = promptCountIndex !== -1 ? parseInt(args[promptCountIndex + 1]) : 5000;
+  const promptCount = promptCountIndex !== -1 ? parseInt(args[promptCountIndex + 1]) : 50;
+
+  if (!Number.isFinite(promptCount) || promptCount < 1) {
+    console.error('Invalid --prompts value. Please pass a positive integer (e.g. --prompts 100).');
+    process.exit(1);
+  }
+  if (promptCount > 500) {
+    console.warn(`Warning: ${promptCount} prompts across all configured models will make a large number of real API calls and incur real costs.`);
+  }
 
   const modelsIndex = args.indexOf('--models');
   const models = modelsIndex !== -1 ? args[modelsIndex + 1]?.split(',') : undefined;
@@ -480,11 +629,15 @@ async function main() {
 
   try {
     await orchestrator.initialize();
-    const result = await orchestrator.run({ promptCount });
+    const result = await orchestrator.run({ promptCount, models });
     console.log('\n=== AEO Simulation Run Complete ===');
     console.log(JSON.stringify(result.summary, null, 2));
   } catch (error) {
     logger.error('Fatal error in orchestrator', { error: error.message, stack: error.stack });
+    if (error instanceof BudgetExceededError) {
+      console.error(`\nBudget exceeded: ${error.message}`);
+      process.exit(3);
+    }
     process.exit(1);
   } finally {
     await orchestrator.cleanup();

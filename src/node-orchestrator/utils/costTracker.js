@@ -4,7 +4,15 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const ROOT_DIR = join(__filename, '..', '..', '..');
+const ROOT_DIR = join(__dirname, '..', '..', '..');
+
+export class BudgetExceededError extends Error {
+  constructor(message, report) {
+    super(message);
+    this.name = 'BudgetExceededError';
+    this.report = report;
+  }
+}
 
 export class CostTracker {
   constructor(config) {
@@ -28,6 +36,7 @@ export class CostTracker {
         this.totalCost = data.totalCost || 0;
         this.costByModel = data.costByModel || {};
         this.costByProvider = data.costByProvider || {};
+        this.costByPersona = data.costByPersona || {};
       } catch (err) {
         // ignore
       }
@@ -64,11 +73,38 @@ export class CostTracker {
       timestamp: new Date().toISOString()
     });
 
-    if (this.totalCost > this.dailyBudget * (this.alertThreshold / 100)) {
+    const pct = (this.totalCost / this.dailyBudget) * 100;
+    if (pct > this.alertThreshold) {
       console.warn(`[COST ALERT] Total cost $${this.totalCost.toFixed(4)} exceeds ${this.alertThreshold}% of daily budget $${this.dailyBudget}`);
     }
 
     this.saveSession();
+  }
+
+  /** Returns true when the session still has budget remaining. */
+  hasBudget() {
+    if (!this.tracking) return true;
+    return this.totalCost < this.dailyBudget;
+  }
+
+  /** Throws when the hard budget cap has been reached. */
+  enforceBudget() {
+    if (!this.tracking) return;
+    if (!this.hasBudget()) {
+      const report = this.getReport();
+      throw new BudgetExceededError(
+        `Daily budget of $${this.dailyBudget.toFixed(2)} exhausted (spent $${this.totalCost.toFixed(4)}). ` +
+        `Set a higher daily_budget_usd in config/execution.json or wait until the budget resets.`,
+        report
+      );
+    }
+  }
+
+  /** Estimated cost of a pending request before it is executed. */
+  estimateCost(modelConfig, estimatedInputTokens = 1000, estimatedOutputTokens = 1000) {
+    if (!this.tracking) return 0;
+    return ((estimatedInputTokens / 1000) * (modelConfig.cost_per_1k_input || 0)) +
+           ((estimatedOutputTokens / 1000) * (modelConfig.cost_per_1k_output || 0));
   }
 
   trackPersonaCost(personaId, cost) {

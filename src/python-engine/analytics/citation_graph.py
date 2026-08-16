@@ -7,6 +7,7 @@ Optimized: bulk-load from Polars DataFrames, avoid iter_rows.
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Any
 from collections import Counter, defaultdict
@@ -14,6 +15,8 @@ from urllib.parse import urlparse
 
 import polars as pl
 import networkx as nx
+
+from brand_utils import build_brand_patterns
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,9 @@ class CitationGraphBuilder:
         self.authority_domains = {}
         for source in self.entity_config.get('external_authority_sources', []):
             self.authority_domains[source['domain']] = source
+        your_brand = self.entity_config.get('your_brand', {}) or {}
+        self.primary_brand = your_brand.get('primary_name', '')
+        self._brand_by_name = {brand: re.compile(pat, re.IGNORECASE) for brand, pat in build_brand_patterns(self.entity_config).items()}
 
     def _extract_domain(self, url: str) -> Optional[str]:
         try:
@@ -98,10 +104,37 @@ class CitationGraphBuilder:
         G = nx.Graph()
         brand_counter = Counter()
         brand_pair_counter = Counter()
+
+        # ResponseExtractor tags brand entities as 'your_brand' or 'competitor'
+        # (never the bare 'brand' type), so accept all brand-like types and
+        # normalize to the configured brand name via the flexible matcher.
+        brand_types = {'brand', 'your_brand', 'competitor'}
+
+        def _normalize(name: str) -> str:
+            if not name:
+                return None
+            lowered = name.lower()
+            for brand in self._brand_by_name:
+                if self._brand_by_name[brand].search(name):
+                    return brand
+            return name
+
+        brand_name_patterns = {}
+        for brand, pat in self._brand_by_name.items():
+            brand_name_patterns[brand] = pat
+
         for entities in df['entities'].to_list():
             if not entities or not isinstance(entities, list):
                 continue
-            brands = [e['name'] for e in entities if isinstance(e, dict) and e.get('type') == 'brand']
+            brands = []
+            for e in entities:
+                if not isinstance(e, dict) or not e.get('name'):
+                    continue
+                if e.get('type') not in brand_types:
+                    continue
+                normalized = _normalize(e['name'])
+                if normalized:
+                    brands.append(normalized)
             for brand in brands:
                 brand_counter[brand] += 1
             for i, b1 in enumerate(brands):
@@ -120,10 +153,12 @@ class CitationGraphBuilder:
         G = nx.DiGraph()
         entity_url_weights = defaultdict(lambda: defaultdict(int))
 
-        for brand, citations in df.select([
+        for row in df.select([
             pl.col('primary_brand_mention').alias('brand'),
             pl.col('citations')
         ]).iter_rows(named=True):
+            brand = row.get('brand', '')
+            citations = row.get('citations', [])
             if not brand:
                 continue
             if citations and isinstance(citations, list):
@@ -148,7 +183,9 @@ class CitationGraphBuilder:
     def _build_model_comparison_graph(self, df: pl.DataFrame) -> nx.DiGraph:
         G = nx.DiGraph()
         model_brand_counts = defaultdict(lambda: defaultdict(int))
-        for model_id, brand in df.select(['model_id', 'primary_brand_mention']).iter_rows(named=True):
+        for row in df.select(['model_id', 'primary_brand_mention']).iter_rows(named=True):
+            model_id = row.get('model_id', '')
+            brand = row.get('primary_brand_mention', '')
             if model_id and brand:
                 model_brand_counts[model_id][brand] += 1
         for model_id, brand_counts in model_brand_counts.items():
@@ -234,10 +271,11 @@ class CitationGraphBuilder:
     def _find_missing_authority_nodes(self, graph: nx.DiGraph, stats: Dict):
         competitor_sources = defaultdict(list)
         your_sources = set()
+        primary_brand_node = f'brand:{self.primary_brand}' if self.primary_brand else None
         for u, v, data in graph.edges(data=True):
-            if v == 'brand:Brand_A' and u.startswith('source:'):
+            if primary_brand_node and v == primary_brand_node and u.startswith('source:'):
                 your_sources.add(u.replace('source:', ''))
-            elif v.startswith('brand:') and v != 'brand:Brand_A' and u.startswith('source:'):
+            elif v.startswith('brand:') and v != primary_brand_node and u.startswith('source:'):
                 competitor_sources[v.replace('brand:', '')].append({'domain': u.replace('source:', ''), 'weight': data.get('weight', 0)})
         for competitor, sources in competitor_sources.items():
             for source in sources:
@@ -251,7 +289,7 @@ class CitationGraphBuilder:
         stats['missing_authority_nodes'] = stats['missing_authority_nodes'][:20]
         for source in your_sources:
             for u, v, d in graph.edges(data=True):
-                if u == f"source:{source}" and v.startswith('brand:') and v != 'brand:Brand_A':
+                if u == f"source:{source}" and v.startswith('brand:') and v != primary_brand_node:
                     stats['your_brand_citation_sources'].append({
                         'domain': source, 'also_cites_competitor': v.replace('brand:', ''),
                         'weight': d.get('weight', 0)

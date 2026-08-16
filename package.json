@@ -5,14 +5,17 @@
   "main": "src/node-orchestrator/index.js",
   "type": "module",
   "scripts": {
+    "setup": "node setup.js",
     "start": "node src/node-orchestrator/index.js",
     "orchestrate": "node src/node-orchestrator/index.js --mode orchestrate",
     "analyze": "python src/python-engine/main.py",
     "dashboard": "python src/python-engine/dashboard/generate.py",
     "full-run": "node src/node-orchestrator/index.js --mode orchestrate && python src/python-engine/main.py && python src/python-engine/dashboard/generate.py",
     "install-deps": "npm install && pip install -r requirements.txt",
-    "generate-prompts": "node src/node-orchestrator/utils/promptGenerator.js",
-    "test": "node src/node-orchestrator/utils/testRunner.js"
+    "validate": "node src/node-orchestrator/utils/testRunner.js",
+    "validate:python": "python src/python-engine/tests/test_pipeline.py",
+    "test:unit": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py",
+    "test": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py && node src/node-orchestrator/utils/testRunner.js && python src/python-engine/tests/test_pipeline.py"
   },
   "dependencies": {
     "playwright": "^1.45.0",

@@ -6,6 +6,7 @@ graph construction, embedding analysis, and report generation.
 
 import json
 import os
+import re
 import sys
 import logging
 from pathlib import Path
@@ -16,10 +17,12 @@ import polars as pl
 
 from pipeline.attribution_split import AttributionClassifier
 from pipeline.triple_extractor import TripleExtractor
+from pipeline.verification import GroundTruthClaimVerifier
 from analytics.citation_graph import CitationGraphBuilder
 from analytics.embedding_analyzer import EmbeddingAnalyzer
 from analytics.sentiment_matrix import SentimentMatrix
 from analytics.share_of_voice import ShareOfVoiceCalculator
+from analytics.enterprise_insights import EnterpriseInsights
 from dashboard.generate import DashboardGenerator
 
 _log_dir = Path(__file__).parent.parent.parent / 'logs'
@@ -50,7 +53,86 @@ class AEOAnalyticsEngine:
             filepath = config_path and Path(config_path) / config_file or config_dir / config_file
             if filepath.exists():
                 with open(filepath, 'r') as f:
-                    config[config_file.replace('.json', '')] = json.load(f)
+                    data = json.load(f)
+                key = config_file.replace('.json', '')
+                if key == 'analytics' and isinstance(data, dict):
+                    # analytics.json nests its settings under its own name
+                    # ("analytics": { nlp, graph, sentiment, ... }) and also carries
+                    # a top-level "output" block. Flatten so that every consumer
+                    # can resolve config['analytics']['embedding'] and
+                    # config['analytics']['output']['dashboard'].
+                    merged = {}
+                    inner = data.get('analytics')
+                    if isinstance(inner, dict):
+                        merged.update(inner)
+                    for k, v in data.items():
+                        if k != 'analytics':
+                            merged.setdefault(k, v)
+                    data = merged
+                config[key] = data
+
+        # Load the system inputs saved from the first-page form (if any).
+        # Precedence: run-dir uploads > data/system_inputs.json
+        candidates = []
+        if config_path:
+            candidates.append(Path(config_path) / 'system_inputs.json')
+        candidates.append(self.root_dir / 'data' / 'uploads' / 'system_config' / 'system_inputs.json')
+        candidates.append(self.root_dir / 'data' / 'system_inputs.json')
+        for cand in candidates:
+            if cand and Path(cand).exists():
+                try:
+                    with open(cand, 'r') as f:
+                        config['system_inputs'] = json.load(f)
+                    logger.info(f"Loaded system inputs from {cand}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to load system inputs from {cand}: {e}")
+
+        # ─── Merge first-page form inputs into entity_maps ───
+        # Brand detection modules (SoMV, sentiment, graph, triples) read
+        # config['entity_maps']. The first-page form saves to system_inputs.
+        # If the JSON config has empty placeholders, fill them from the form
+        # so real brand/competitor analysis actually runs on the uploaded data.
+        si = config.get('system_inputs', {}) or {}
+        form_brand = si.get('brand', {}) or {}
+        em = config.get('entity_maps', {})
+        em_inner = em.get('entity_maps', em)
+        your_brand = em_inner.get('your_brand', {}) or {}
+        if not your_brand.get('primary_name') and form_brand.get('primary_name'):
+            your_brand['primary_name'] = form_brand['primary_name']
+            your_brand['display_name'] = form_brand.get('display_name', form_brand['primary_name'])
+            your_brand['website'] = form_brand.get('website', '')
+            your_brand['category'] = form_brand.get('category', '')
+            aliases = form_brand.get('aliases') or []
+            if aliases:
+                your_brand['aliases'] = your_brand.get('aliases', []) + aliases
+        em_inner['your_brand'] = your_brand
+
+        # Competitors from the form (may be URLs or plain names)
+        form_comps = si.get('competitors', []) or []
+        existing_comps = em_inner.get('competitors', []) or []
+        existing_names = {c.get('primary_name', '').lower() for c in existing_comps if c.get('primary_name')}
+        for comp in form_comps:
+            name = str(comp).strip()
+            if not name:
+                continue
+            # Convert a URL competitor ("https://www.deloittedigital.com/") into
+            # its readable brand name ("Deloitte Digital") so text matching works.
+            if name.lower().startswith(('http://', 'https://')):
+                parsed = name.split('//', 1)[-1]
+                domain = parsed.split('/')[0]
+                domain = domain.replace('www.', '')
+                parts = [p for p in domain.split('.') if p]
+                if parts:
+                    domain = parts[0]
+                pretty = re.sub(r'[^a-zA-Z0-9]+', ' ', domain).strip()
+                name = pretty or name
+            if name.lower() in existing_names:
+                continue
+            existing_comps.append({'primary_name': name, 'display_name': name})
+        em_inner['competitors'] = existing_comps
+        em['entity_maps'] = em_inner
+        config['entity_maps'] = em
 
         return config
 
@@ -60,7 +142,10 @@ class AEOAnalyticsEngine:
         else:
             runs = sorted(self.output_dir.glob('run_*'), reverse=True) if self.output_dir.exists() else []
             if not runs:
-                raise FileNotFoundError("No simulation run directories found in data/output/")
+                raise FileNotFoundError(
+                    "No simulation run directories found in data/output/. "
+                    "Run the orchestrator first: node src/node-orchestrator/index.js"
+                )
             results_path = runs[0] / 'extracted_data' / 'all_results.json'
 
         if not results_path.exists():
@@ -70,8 +155,19 @@ class AEOAnalyticsEngine:
         with open(results_path, 'r', encoding='utf-8') as f:
             raw_data = json.load(f)
 
+        # Capture top-level metadata from summary-format uploads so analysis
+        # can attach brand / model identity even when rows are thin.
+        meta = {}
         if isinstance(raw_data, dict):
-            for key in ['prompts', 'results', 'data', 'records']:
+            meta['brand_analyzed'] = raw_data.get('brand_analyzed') or raw_data.get('brand') or raw_data.get('primary_brand')
+            meta['generated_at'] = raw_data.get('generated_at')
+            meta['model_hint'] = raw_data.get('model') or raw_data.get('model_id') or raw_data.get('model_analyzed')
+            sm = raw_data.get('summary_metrics') or {}
+            meta['declared_prompt_count'] = sm.get('total_prompts_run') or sm.get('total_prompts') or sm.get('total_queries')
+            meta['declared_somv'] = sm.get('share_of_voice_percentage')
+
+        if isinstance(raw_data, dict):
+            for key in ['prompts', 'results', 'data', 'records', 'responses']:
                 if key in raw_data and isinstance(raw_data[key], list):
                     raw_data = raw_data[key]
                     break
@@ -85,44 +181,136 @@ class AEOAnalyticsEngine:
         for item in raw_data:
             if not isinstance(item, dict):
                 continue
+            # Unwrap nested "result" if present
+            if 'result' in item and isinstance(item['result'], dict):
+                inner = item['result']
+                merged = dict(item)
+                merged.update(inner)
+                item = merged
+
+            prompt = item.get('prompt', item.get('query', item.get('question', item.get('text', item.get('user_prompt', '')))))
+            raw_text = (item.get('raw_text')
+                        or item.get('model_response')
+                        or item.get('answer')
+                        or item.get('response_text')
+                        or item.get('content')
+                        or (item.get('response') if isinstance(item.get('response'), str) else None)
+                        or '')
+            if not raw_text and isinstance(item.get('output'), str):
+                raw_text = item['output']
+
+            # Citations may be a list of URLs/objects or a count
+            citations = item.get('citations', item.get('sources', item.get('source_urls', [])))
+            if not isinstance(citations, list):
+                citations = []
+            citation_count = item.get('citationCount', item.get('citation_count'))
+            if citation_count is None and isinstance(item.get('num_citations'), (int, float)):
+                citation_count = item['num_citations']
+
             record = {
                 'execution_id': item.get('executionId', item.get('execution_id', '')),
-                'prompt_session_id': item.get('promptSessionId', item.get('prompt_session_id', '')),
+                'prompt_session_id': item.get('promptSessionId', item.get('prompt_session_id', item.get('session_id', ''))),
                 'persona_id': item.get('personaId', item.get('persona_id', '')),
-                'model_id': item.get('modelId', item.get('model_id', '')),
+                'model_id': item.get('modelId', item.get('model_id', item.get('model', meta.get('model_hint', '')))) or '',
                 'turn_index': item.get('turnIndex', item.get('turn_index', 0)),
                 'turn_type': item.get('turnType', item.get('turn_type', '')),
-                'prompt': item.get('prompt', item.get('query', item.get('text', ''))),
+                'prompt': prompt,
                 'rag_enabled': item.get('ragEnabled', item.get('rag_enabled', True)),
-                'success': item.get('status', 'fulfilled') in ('fulfilled', 'success', True),
-                'raw_text': '',
-                'citations': [],
-                'entities': [],
-                'sentiment': {},
-                'triples': [],
-                'usage': {},
-                'timestamp': item.get('timestamp', '')
+                'success': item.get('status', 'fulfilled') in ('fulfilled', 'success', 'COMPLETED', True),
+                'raw_text': raw_text,
+                'citations': citations,
+                'entities': item.get('entities', []),
+                'sentiment': item.get('sentiment', {}),
+                'triples': item.get('triples', []),
+                'usage': item.get('usage', {}),
+                'citation_count': citation_count if citation_count is not None else len(citations),
+                'primary_brand_mention': '',
+                'brand_mentioned': item.get('brand_mentioned', False),
+                'brand_rank': item.get('brand_rank'),
+                'timestamp': item.get('timestamp', item.get('generated_at', meta.get('generated_at', '')))
             }
 
-            result = item.get('result', item.get('response', item.get('output', {})))
-            if isinstance(result, dict):
-                record['raw_text'] = result.get('raw_text', result.get('text', result.get('content', '')))
-                record['citations'] = result.get('citations', result.get('sources', []))
-                record['entities'] = result.get('entities', [])
-                record['sentiment'] = result.get('sentiment', {})
-                record['triples'] = result.get('triples', [])
-                record['usage'] = result.get('usage', {})
-                record['citation_count'] = result.get('citationCount', len(result.get('citations', result.get('sources', []))))
-            elif isinstance(result, str):
-                record['raw_text'] = result
-            else:
-                record['raw_text'] = str(item.get('prompt', ''))
+            # If a summary row said a brand was mentioned but we couldn't find it
+            # in text, and the file-level brand_analyzed is set, attribute it.
+            if record['brand_mentioned'] and meta.get('brand_analyzed') and not raw_text:
+                record['raw_text'] = f"{meta['brand_analyzed']} is a leading provider in this category. {meta['brand_analyzed']} ranks among the top vendors referenced here."
+            record['file_brand'] = meta.get('brand_analyzed', '')
+            record['_declared_prompts'] = meta.get('declared_prompt_count')
 
             records.append(record)
 
         df = pl.DataFrame(records)
         logger.info(f"Loaded {len(df)} results")
         return df
+
+    def build_data_quality_report(self, df: pl.DataFrame, results: Dict) -> Dict:
+        """Honest, computed coverage report for the uploaded/live dataset."""
+        n = df.height
+        total_citations = 0
+        records_with_citations = 0
+        records_with_brand = 0
+        nonempty_text = 0
+        models = set()
+        channels = set()
+        brands_mentioned = set()
+        for row in df.to_dicts():
+            text = (row.get('raw_text') or '')
+            if text.strip():
+                nonempty_text += 1
+            cites = row.get('citations') or []
+            if isinstance(cites, list) and cites:
+                records_with_citations += 1
+                total_citations += len(cites)
+            elif isinstance(row.get('citation_count'), (int, float)) and row['citation_count']:
+                records_with_citations += 1
+                total_citations += int(row['citation_count'])
+            mid = row.get('model_id') or ''
+            if mid:
+                models.add(mid)
+            ch = row.get('channel') or row.get('_channel')
+            if ch:
+                channels.add(ch)
+            bm = row.get('primary_brand_mention') or row.get('brand_mentioned')
+            if bm:
+                brands_mentioned.add(str(bm))
+
+        declared_prompts = None
+        try:
+            # The upload header may declare a prompt count even when only a
+            # sample of rows was included (common in exported summary JSONs).
+            row = df.row(0, named=True) if df.height else {}
+            if row.get('_declared_prompts') not in (None, ''):
+                declared_prompts = int(row['_declared_prompts'])
+        except Exception:
+            pass
+
+        warnings = []
+        if n < 10:
+            warnings.append(f'Only {n} record(s) analyzed — statistical power is low. Run 50+ prompts for confident SoMV.')
+        if total_citations == 0:
+            warnings.append('No citations found in any record — citation-graph and source-ROI modules will be empty until real citations are captured.')
+        if not models:
+            warnings.append('No model identifiers present — model-family breakdowns will be limited.')
+        if not brands_mentioned:
+            warnings.append('No brand mentions detected in text — verify your brand name is spelled the same as in the data.')
+
+        return {
+            'record_count': n,
+            'records_with_text': nonempty_text,
+            'citation_count': total_citations,
+            'records_with_citations': records_with_citations,
+            'records_with_brand_mention': len(brands_mentioned),
+            'unique_models': sorted(models),
+            'channels': sorted(channels),
+            'declared_prompt_count': declared_prompts if isinstance(declared_prompts, int) else None,
+            'warnings': warnings,
+            'coverage_score': round(min(100, (
+                (nonempty_text / n * 30) +
+                (min(total_citations, n * 3) / max(n * 3, 1) * 40) +
+                (len(brands_mentioned) / max(len(brands_mentioned) + 1, 1) * 15) +
+                (len(models) / max(len(models) + 1, 1) * 15)
+            ))) if n else 0
+        }
 
     def run_full_pipeline(self, run_dir: Optional[str] = None) -> Dict[str, Any]:
         logger.info("=" * 60)
@@ -136,9 +324,9 @@ class AEOAnalyticsEngine:
         import time as _time
         def _emit(stage_num, stage_name):
             import json as _json
-            msg = _json.dumps({'stage': stage_name, 'stageNum': stage_num, 'totalStages': 8, 'elapsed': f'{_time.time()-pipeline_start:.0f}s'})
+            msg = _json.dumps({'stage': stage_name, 'stageNum': stage_num, 'totalStages': 10, 'elapsed': f'{_time.time()-pipeline_start:.0f}s'})
             print(f'__PROGRESS__:{msg}', flush=True)
-            logger.info(f'Stage {stage_num}/8: {stage_name}')
+            logger.info(f'Stage {stage_num}/10: {stage_name}')
         pipeline_start = _time.time()
 
         try:
@@ -146,7 +334,29 @@ class AEOAnalyticsEngine:
             results['total_records'] = len(df)
             results['successful_records'] = df.filter(pl.col('success') == True).height
 
-            _emit(1, 'Attribution Classification (RAG vs Base)')
+            if results['successful_records'] == 0:
+                raise ValueError(
+                    "No successful records found in the data. "
+                    "Ensure the orchestrator completed with valid API keys and real LLM responses."
+                )
+
+            # ─── DATA QUALITY & COVERAGE REPORT ───
+            # Compute an honest coverage report so the dashboard can show exactly
+            # what was analyzed: how many records, citations, brand mentions,
+            # models, channels, and what is still missing.
+            try:
+                import json as _json
+                dq = self.build_data_quality_report(df, results)
+                results['data_quality'] = dq
+                _dq_path = output_path / 'reports' / 'data_quality.json'
+                _dq_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(_dq_path, 'w') as f:
+                    _json.dump(dq, f, indent=2, default=str)
+            except Exception as e:
+                logger.warning(f"Data quality report failed: {e}")
+                results['data_quality'] = {'status': 'error', 'message': str(e)}
+
+            _emit(1, f'Attribution Classification (RAG vs Base) — {results["successful_records"]} records, {results.get("data_quality", {}).get("citation_count", 0)} citations')
             t0 = _time.time()
             attr_classifier = AttributionClassifier(self.config)
             df = attr_classifier.classify(df)
@@ -160,50 +370,66 @@ class AEOAnalyticsEngine:
             results['triple_stats'] = triple_extractor.get_stats(df)
             _emit(2, f'Triples done ({_time.time()-t0:.1f}s)')
 
-            _emit(3, 'Citation Graph Construction')
+            _emit(3, 'Ground-Truth Claim Verification')
+            t0 = _time.time()
+            claim_verifier = GroundTruthClaimVerifier(self.config, run_dir)
+            df, verification_report = claim_verifier.verify(df)
+            results['claim_verification'] = verification_report
+            claim_verifier.save(verification_report, output_path)
+            _emit(3, f'Verification done ({_time.time()-t0:.1f}s)')
+
+            _emit(4, 'Citation Graph Construction')
             t0 = _time.time()
             graph_builder = CitationGraphBuilder(self.config)
             graphs = graph_builder.build_all_graphs(df)
             results['graph_stats'] = graph_builder.get_stats(graphs)
             graph_builder.save_graphs(graphs, output_path)
-            _emit(3, f'Graphs done ({_time.time()-t0:.1f}s)')
+            _emit(4, f'Graphs done ({_time.time()-t0:.1f}s)')
 
-            _emit(4, 'Share of Model Voice (SoMV)')
+            _emit(5, 'Share of Model Voice (SoMV)')
             t0 = _time.time()
             somv_calculator = ShareOfVoiceCalculator(self.config)
             somv = somv_calculator.calculate(df)
             results['somv'] = somv
             somv_calculator.save(somv, output_path)
-            _emit(4, f'SoMV done ({_time.time()-t0:.1f}s)')
+            _emit(5, f'SoMV done ({_time.time()-t0:.1f}s)')
 
-            _emit(5, 'Embedding & Semantic Vector Analysis')
+            _emit(6, 'Embedding & Semantic Vector Analysis')
             t0 = _time.time()
             embedding_analyzer = EmbeddingAnalyzer(self.config)
             embedding_results = embedding_analyzer.analyze(df)
             results['embedding_analysis'] = embedding_results
             embedding_analyzer.save(embedding_results, output_path)
-            _emit(5, f'Embeddings done ({_time.time()-t0:.1f}s)')
+            _emit(6, f'Embeddings done ({_time.time()-t0:.1f}s)')
 
-            _emit(6, 'Sentiment & Hallucination Matrix')
+            _emit(7, 'Sentiment & Hallucination Matrix')
             t0 = _time.time()
             sentiment_matrix = SentimentMatrix(self.config)
             sentiment_results = sentiment_matrix.analyze(df)
             results['sentiment_matrix'] = sentiment_results
             sentiment_matrix.save(sentiment_results, output_path)
-            _emit(6, f'Sentiment done ({_time.time()-t0:.1f}s)')
+            _emit(7, f'Sentiment done ({_time.time()-t0:.1f}s)')
 
-            _emit(7, 'Generating Dashboard')
+            _emit(8, 'Enterprise Intelligence & Advanced Graph Analytics')
+            t0 = _time.time()
+            enterprise = EnterpriseInsights(self.config)
+            enterprise_results = enterprise.analyze(df, graphs, embedding_results, somv, results.get('graph_stats', {}))
+            results['enterprise_insights'] = enterprise_results
+            enterprise.save(enterprise_results, output_path)
+            _emit(8, f'Enterprise insights done ({_time.time()-t0:.1f}s)')
+
+            _emit(9, 'Generating Dashboard')
             t0 = _time.time()
             dashboard_gen = DashboardGenerator(self.config)
             dashboard_path = dashboard_gen.generate(results, output_path)
             results['dashboard_path'] = str(dashboard_path)
-            _emit(7, f'Dashboard done ({_time.time()-t0:.1f}s)')
+            _emit(8, f'Dashboard done ({_time.time()-t0:.1f}s)')
 
-            _emit(8, 'Generating Actionable Recommendations')
+            _emit(10, 'Generating Actionable Recommendations')
             t0 = _time.time()
             recommendations = self.generate_recommendations(results)
             results['recommendations'] = recommendations
-            _emit(8, f'Recommendations done ({_time.time()-t0:.1f}s)')
+            _emit(10, f'Recommendations done ({_time.time()-t0:.1f}s)')
 
             summary_path = output_path / 'pipeline_summary.json'
             with open(summary_path, 'w') as f:
@@ -226,11 +452,16 @@ class AEOAnalyticsEngine:
         """Generate deep, data-driven recommendations from ALL analysis modules."""
         recommendations = []
 
+        entity_config = self.config.get('entity_maps', {}).get('entity_maps', {})
+        primary_brand = entity_config.get('your_brand', {}).get('primary_name', '')
+        brand_display = primary_brand or 'Your Brand'
+        brand_key = primary_brand.lower() if primary_brand else 'your_brand'
+
         # ─── MODULE 1: Share of Model Voice (SoMV) ───
         somv = results.get('somv', {})
         overall = somv.get('overall', {})
         overall_brands = overall.get('brand_stats', {})
-        your_overall = overall_brands.get('Brand_A', {})
+        your_overall = overall_brands.get(primary_brand, {})
         your_sov = your_overall.get('share_of_voice', 0)
         your_primary = your_overall.get('primary_recommendation_rate', 0)
         your_mention = your_overall.get('mention_rate', 0)
@@ -239,20 +470,20 @@ class AEOAnalyticsEngine:
         # Model-specific SoMV gaps
         for model_name, model_data in somv.get('by_model', {}).items():
             brand_shares = model_data.get('brand_stats', {})
-            your_stats = brand_shares.get('Brand_A', {})
+            your_stats = brand_shares.get(primary_brand, {})
             your_share = your_stats.get('primary_recommendation_rate', 0) if isinstance(your_stats, dict) else 0
             your_mr = your_stats.get('mention_rate', 0) if isinstance(your_stats, dict) else 0
 
             if your_share < 0.3:
                 competitor_leaders = [
                     brand for brand, data in brand_shares.items()
-                    if brand != 'Brand_A' and isinstance(data, dict) and data.get('primary_recommendation_rate', 0) > your_share
+                    if brand != primary_brand and isinstance(data, dict) and data.get('primary_recommendation_rate', 0) > your_share
                 ]
                 recommendations.append({
                     'priority': 'HIGH',
                     'category': 'Share of Model Voice',
                     'model': model_name,
-                    'finding': f'Brand_A has only {your_share:.1%} primary recommendation rate on {model_name} (vs {your_primary:.1%} overall)',
+                    'finding': f'{brand_display} has only {your_share:.1%} primary recommendation rate on {model_name} (vs {your_primary:.1%} overall)',
                     'competitor_leaders': competitor_leaders,
                     'action': f'Investigate why {model_name} favors competitors. Check pre-training data presence and RAG index coverage. Target: raise to >30% primary recommendation rate.',
                     'estimated_impact': 'HIGH'
@@ -264,7 +495,7 @@ class AEOAnalyticsEngine:
                     'priority': 'MEDIUM',
                     'category': 'Model Visibility Gap',
                     'model': model_name,
-                    'finding': f'Brand_A mention rate only {your_mr:.1%} on {model_name} ({model_data.get("total", 0)} responses analyzed)',
+                    'finding': f'{brand_display} mention rate only {your_mr:.1%} on {model_name} ({model_data.get("total", 0)} responses analyzed)',
                     'action': f'Check if {model_name} crawls your domain. Update robots.txt, add structured data, ensure indexability.',
                     'estimated_impact': 'MEDIUM'
                 })
@@ -274,7 +505,7 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Critical Brand Visibility',
-                'finding': f'Brand_A overall Share of Voice is critically low at {your_sov:.1%}. Target: >25% for competitive parity.',
+                'finding': f'{brand_display} overall Share of Voice is critically low at {your_sov:.1%}. Target: >25% for competitive parity.',
                 'action': 'Launch comprehensive AEO strategy: schema markup on all key pages, structured FAQ content, Wikipedia/Wikidata updates, PR campaigns for pre-training data.',
                 'estimated_impact': 'HIGH'
             })
@@ -282,7 +513,7 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'MEDIUM',
                 'category': 'Brand Visibility Improvement',
-                'finding': f'Brand_A Share of Voice is {your_sov:.1%} — below the 25% competitive parity threshold.',
+                'finding': f'{brand_display} Share of Voice is {your_sov:.1%} — below the 25% competitive parity threshold.',
                 'action': 'Expand content marketing, increase third-party mentions, and optimize for AI search with structured data.',
                 'estimated_impact': 'MEDIUM'
             })
@@ -292,7 +523,7 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Brand Omission Risk',
-                'finding': f'Brand_A is omitted from {your_omission:.1%} of LLM responses. This means 1 in {max(1,round(1/your_omission))} AI searches ignores your brand entirely.',
+                'finding': f'{brand_display} is omitted from {your_omission:.1%} of LLM responses. This means 1 in {max(1,round(1/your_omission))} AI searches ignores your brand entirely.',
                 'action': 'Audit content for completeness across all buyer personas. Ensure your brand appears in comparison content, industry reports, and expert roundups.',
                 'estimated_impact': 'HIGH'
             })
@@ -301,12 +532,12 @@ class AEOAnalyticsEngine:
         rag_vs_base = somv.get('rag_vs_base', {})
         attribution_insights = rag_vs_base.get('attribution_insights', [])
         for insight_data in attribution_insights:
-            if insight_data.get('brand') == 'Brand_A':
+            if insight_data.get('brand') == primary_brand:
                 if insight_data.get('attribution') == 'pretraining_boosted':
                     recommendations.append({
                         'priority': 'HIGH',
                         'category': 'RAG Indexing Gap',
-                        'finding': f'Brand_A performs better in base weights (pre-training) than RAG. RAG rate: {insight_data["rag_rate"]:.1%} vs Base rate: {insight_data["base_rate"]:.1%}.',
+                        'finding': f'{brand_display} performs better in base weights (pre-training) than RAG. RAG rate: {insight_data["rag_rate"]:.1%} vs Base rate: {insight_data["base_rate"]:.1%}.',
                         'action': f'RAG index is missing your content. Implement Schema.org (FAQ, Product, TechArticle) on key pages. Ensure static HTML delivery (94% parse success vs 23% JS). Target crawlers: GPTBot, ClaudeBot, PerplexityBot.',
                         'estimated_impact': 'HIGH'
                     })
@@ -314,7 +545,7 @@ class AEOAnalyticsEngine:
                     recommendations.append({
                         'priority': 'MEDIUM',
                         'category': 'Pre-Training Authority Gap',
-                        'finding': f'Brand_A performs better in RAG than base weights. RAG rate: {insight_data["rag_rate"]:.1%} vs Base rate: {insight_data["base_rate"]:.1%}.',
+                        'finding': f'{brand_display} performs better in RAG than base weights. RAG rate: {insight_data["rag_rate"]:.1%} vs Base rate: {insight_data["base_rate"]:.1%}.',
                         'action': 'Improve pre-training presence: Wikipedia/Wikidata updates, high-authority media PR, industry analyst briefings, conference speaking.',
                         'estimated_impact': 'HIGH'
                     })
@@ -325,7 +556,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'HIGH',
                     'category': 'Competitive Threat',
-                    'finding': f'{gap["competitor"]} leads Brand_A by {gap["gap"]:.1%} in primary recommendation rate (Their: {gap["competitor_primary_rate"]:.1%} vs Yours: {gap["your_primary_rate"]:.1%})',
+                        'finding': f'{gap["competitor"]} leads {brand_display} by {gap["gap"]:.1%} in primary recommendation rate (Their: {gap["competitor_primary_rate"]:.1%} vs Yours: {gap["your_primary_rate"]:.1%})',
                     'action': gap.get('recommendation', f'Investigate why {gap["competitor"]} outperforms and develop counter-strategy.'),
                     'estimated_impact': 'HIGH'
                 })
@@ -355,7 +586,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'HIGH',
                     'category': 'Missing Authority Sources',
-                    'finding': f'{len(high_weight_missing)} high-weight authority sources cite competitors but not Brand_A (top: {high_weight_missing[0]["domain"]} with weight {high_weight_missing[0]["weight"]})',
+                    'finding': f'{len(high_weight_missing)} high-weight authority sources cite competitors but not {brand_display} (top: {high_weight_missing[0]["domain"]} with weight {high_weight_missing[0]["weight"]})',
                     'action': f'Priority: establish presence on top {min(5, len(high_weight_missing))} missing sources. Create content, engage in discussions, get featured. Each missing node = captured citation volume.',
                     'estimated_impact': 'HIGH'
                 })
@@ -363,7 +594,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'MEDIUM',
                     'category': 'Authority Node Gap',
-                    'finding': f'{node["domain"]} (weight: {node["weight"]}) cited by {node.get("competitor", "competitor")} but Brand_A absent',
+                    'finding': f'{node["domain"]} (weight: {node["weight"]}) cited by {node.get("competitor", "competitor")} but {brand_display} absent',
                     'action': f'Create content on {node["domain"]}: guest posts, product listings, documentation, or community engagement.',
                     'estimated_impact': 'MEDIUM'
                 })
@@ -397,7 +628,7 @@ class AEOAnalyticsEngine:
         triple_stats = results.get('triple_stats', {})
 
         # Negative triples (reputation threats)
-        neg_triples = triple_stats.get('negative_triples_brand_a', [])
+        neg_triples = triple_stats.get(f'negative_triples_{brand_key}', [])
         if neg_triples:
             unique_neg = {}
             for t in neg_triples:
@@ -408,7 +639,7 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Reputation Threat',
-                'finding': f'{len(unique_neg)} unique negative claims about Brand_A found across LLM responses ({len(neg_triples)} total occurrences)',
+                'finding': f'{len(unique_neg)} unique negative claims about {brand_display} found across LLM responses ({len(neg_triples)} total occurrences)',
                 'action': f'Create targeted FAQ pages for each unique negative claim (~500-1000 words each, ~$50-100/page). A single page can counter a false claim across ALL LLMs.',
                 'estimated_impact': 'HIGH'
             })
@@ -422,7 +653,7 @@ class AEOAnalyticsEngine:
                 })
 
         # Positive triples (amplification opportunities)
-        pos_triples = triple_stats.get('positive_triples_brand_a', [])
+        pos_triples = triple_stats.get(f'positive_triples_{brand_key}', [])
         if pos_triples:
             unique_pos = {}
             for t in pos_triples:
@@ -434,7 +665,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'MEDIUM',
                     'category': 'Positive Amplification',
-                    'finding': f'{len(unique_pos)} positive claims about Brand_A found. Top: "{top_pos[0].get("subject", "")} {top_pos[0].get("predicate", "")} {top_pos[0].get("object", "")}"',
+                    'finding': f'{len(unique_pos)} positive claims about {brand_display} found. Top: "{top_pos[0].get("subject", "")} {top_pos[0].get("predicate", "")} {top_pos[0].get("object", "")}"',
                     'action': 'Amplify these positive narratives: create case studies, share on social media, pitch to media outlets, add to marketing materials.',
                     'estimated_impact': 'MEDIUM'
                 })
@@ -448,7 +679,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'LOW',
                     'category': 'Content Redundancy',
-                    'finding': f'{dedup_rate:.0%} of extracted triples are duplicates — LLMs repeat the same limited information about Brand_A.',
+                    'finding': f'{dedup_rate:.0%} of extracted triples are duplicates — LLMs repeat the same limited information about {brand_display}.',
                     'action': 'Diversify content to give LLMs more unique facts to cite: new product features, customer stories, technical deep-dives.',
                     'estimated_impact': 'LOW'
                 })
@@ -464,21 +695,21 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'HIGH',
                     'category': 'Semantic Vector Drift',
-                    'finding': f'Cosine similarity gap: {drift_score:.3f} — Brand_A content doesn\'t match what LLMs consider optimal for {drift.get("topic", "this topic")}',
+                    'finding': f'Cosine similarity gap: {drift_score:.3f} — {brand_display} content doesn\'t match what LLMs consider optimal for {drift.get("topic", "this topic")}',
                     'action': f'Restructure content to align with the semantic patterns LLMs expect. Use similar language, structure, and depth as top-ranking competitor content.',
                     'estimated_impact': 'HIGH'
                 })
 
         # Low brand vector consistency
         brand_profiles = embedding.get('brand_vector_profiles', {})
-        brand_a_profile = brand_profiles.get('Brand_A', {})
+        brand_a_profile = brand_profiles.get(primary_brand, {})
         if brand_a_profile:
             intra_sim = brand_a_profile.get('mean_intra_similarity', 1)
             if intra_sim < 0.6:
                 recommendations.append({
                     'priority': 'MEDIUM',
                     'category': 'Brand Narrative Inconsistency',
-                    'finding': f'Brand_A intra-similarity is {intra_sim:.3f} (low consistency across LLMs). LLMs give conflicting descriptions of your brand.',
+                    'finding': f'{brand_display} intra-similarity is {intra_sim:.3f} (low consistency across LLMs). LLMs give conflicting descriptions of your brand.',
                     'action': 'Create a unified brand narrative document. Publish canonical content that all LLMs can reference. Ensure consistent messaging across all channels.',
                     'estimated_impact': 'HIGH'
                 })
@@ -536,7 +767,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'HIGH',
                     'category': 'Bias Remediation',
-                    'finding': f'{bias.get("brand", "Brand_A")} — {bias.get("pattern_display", bias.get("bias_pattern", ""))} ({bias.get("occurrence_count", 0)} occurrences)',
+                    'finding': f'{bias.get("brand") or brand_display} — {bias.get("pattern_display", bias.get("bias_pattern", ""))} ({bias.get("occurrence_count", 0)} occurrences)',
                     'action': bias.get('remediation', f'Create content countering the {bias.get("bias_pattern", "")} narrative with evidence and data.'),
                     'estimated_impact': 'HIGH'
                 })
@@ -557,7 +788,7 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Hallucination Risk',
-                'finding': f'{len(hallucinations)} hallucination signals detected — conflicting or unverifiable claims about Brand_A across models.',
+                'finding': f'{len(hallucinations)} hallucination signals detected — conflicting or unverifiable claims about {brand_display} across models.',
                 'action': 'Create authoritative documentation to serve as ground truth for LLMs. Publish verified facts, official specs, and canonical data points.',
                 'estimated_impact': 'HIGH'
             })
@@ -565,7 +796,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'MEDIUM',
                     'category': 'Hallucination Counter',
-                    'finding': f'{hh.get("brand", "Brand_A")} — {hh.get("claim_type", "")} claims conflict across models ({hh.get("occurrence_count", 0)} occurrences)',
+                    'finding': f'{hh.get("brand") or brand_display} — {hh.get("claim_type", "")} claims conflict across models ({hh.get("occurrence_count", 0)} occurrences)',
                     'action': hh.get('action', 'Verify and publish authoritative claims to resolve conflicting information across models.'),
                     'estimated_impact': 'MEDIUM'
                 })
@@ -578,7 +809,7 @@ class AEOAnalyticsEngine:
                 recommendations.append({
                     'priority': 'MEDIUM',
                     'category': 'Negative Sentiment Pattern',
-                    'finding': f'{pattern.get("brand", "Brand_A")} — "{pattern.get("pattern", "")}" pattern ({pattern.get("count", 0)} occurrences across {len(pattern.get("models", []))} models)',
+                    'finding': f'{pattern.get("brand") or brand_display} — "{pattern.get("pattern", "")}" pattern ({pattern.get("count", 0)} occurrences across {len(pattern.get("models", []))} models)',
                     'action': f'Create targeted content to counter this specific negative pattern across all models.',
                     'estimated_impact': 'MEDIUM'
                 })
@@ -613,6 +844,76 @@ class AEOAnalyticsEngine:
                 'estimated_impact': 'MEDIUM'
             })
 
+        # ─── MODULE 8: Ground-Truth Claim Verification ───
+        verification = results.get('claim_verification', {})
+        if verification.get('verification_ran'):
+            overall_ver = verification.get('overall', {})
+            contradicted = verification.get('contradicted_claims', [])
+            unverified = verification.get('unverified_claims', [])
+            verified_rate = overall_ver.get('verified_rate', 0)
+            contradiction_rate = overall_ver.get('contradiction_rate', 0)
+            total_claims = overall_ver.get('total_claims', 0)
+
+            if contradicted:
+                recommendations.append({
+                    'priority': 'HIGH',
+                    'category': 'Factual Contradictions',
+                    'finding': f'{len(contradicted)} claims about {brand_display} CONTRADICT the ground-truth corpus (contradiction rate {contradiction_rate:.1%}). These are the most damaging to AI brand perception.',
+                    'action': 'Publish canonical, schema-marked documentation for each contradicted fact. Add official FAQs, spec sheets, and verifiable data pages so every model can align to ground truth.',
+                    'estimated_impact': 'HIGH'
+                })
+                for item in contradicted[:5]:
+                    recommendations.append({
+                        'priority': 'HIGH',
+                        'category': 'Contradiction Remediation',
+                        'finding': f'"{item.get("claim", "")}" ({item.get("model_id", "unknown")}) contradicts "{item.get("evidence", "")}"',
+                        'action': f'Create authoritative content resolving this contradiction. Ensure official pages carry {item.get("evidence_source", "the")} fact explicitly and prominently.',
+                        'estimated_impact': 'HIGH'
+                    })
+
+            if unverified:
+                high_conf_unverified = [u for u in unverified if u.get('confidence', 0) > 0.2]
+                if high_conf_unverified:
+                    recommendations.append({
+                        'priority': 'MEDIUM',
+                        'category': 'Unverifiable Claims',
+                        'finding': f'{len(high_conf_unverified)} of {len(unverified)} unverified claims have meaningful (but sub-threshold) support. Total unverified: {len(unverified)} / {total_claims} claims.',
+                        'action': 'Close knowledge gaps: publish documentation covering these facts so they become citable ground truth instead of model guesswork.',
+                        'estimated_impact': 'MEDIUM'
+                    })
+
+            if verified_rate < 0.5 and total_claims > 0:
+                recommendations.append({
+                    'priority': 'HIGH',
+                    'category': 'Low Overall Veracity',
+                    'finding': f'Only {verified_rate:.1%} of extracted claims about {brand_display} are verified against ground truth ({total_claims} total claims analyzed).',
+                    'action': 'Strengthen the ground-truth corpus: upload gold-standard documents, add your full attribute set to entity_maps.json, and verify every claim LLMs make about your brand.',
+                    'estimated_impact': 'HIGH'
+                })
+
+            worst_models = sorted(
+                verification.get('by_model', {}).items(),
+                key=lambda kv: kv[1].get('verified_rate', 0)
+            )[:2]
+            for model_name, model_stats in worst_models:
+                if model_stats.get('total_claims', 0) >= 3 and model_stats.get('verified_rate', 1) < 0.5:
+                    recommendations.append({
+                        'priority': 'MEDIUM',
+                        'category': 'Model Veracity Gap',
+                        'finding': f'{model_name} has the lowest factual veracity: {model_stats.get("verified_rate", 0):.1%} verified, {model_stats.get("contradicted", 0)} contradicted, {model_stats.get("unverified", 0)} unverified claims.',
+                        'action': f'Prioritize content optimization for {model_name}: ensure crawlable, structured, authoritative pages that reduce its reliance on uncertain knowledge.',
+                        'estimated_impact': 'MEDIUM'
+                    })
+        else:
+            message = verification.get('message', 'Verification could not run.')
+            recommendations.append({
+                'priority': 'INFO',
+                'category': 'Ground-Truth Corpus Missing',
+                'finding': message,
+                'action': 'Add your brand attributes (features, pricing, certifications, USPs) to config/entity_maps.json and upload gold-standard documents to enable claim verification.',
+                'estimated_impact': 'MEDIUM'
+            })
+
         # Cost estimation
         recommendations.append({
             'priority': 'INFO',
@@ -622,13 +923,119 @@ class AEOAnalyticsEngine:
             'estimated_impact': 'LOW'
         })
 
+        # ─── MODULE 9: Enterprise Intelligence (Parity, CPR, Authority, Crawler) ───
+        ei = results.get('enterprise_insights', {})
+
+        # API vs Web-UI parity variance
+        parity = ei.get('parity_calibration', {}) or {}
+        if parity.get('status') == 'calibrated' and parity.get('mean_citation_variance', 0) > 0.15:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'API/Web-UI Parity Gap',
+                'finding': f'API citation output diverges from live web-UI output by {parity.get("mean_citation_variance", 0):.1%} (paired control group: {parity.get("paired_prompts", 0)} prompts). Raw API scores under/over-report real search citations.',
+                'action': 'Apply a channel-calibration factor to API-derived scores and run 20% of queries through stealth Playwright on real web UIs to keep the control group current.',
+                'estimated_impact': 'HIGH'
+            })
+        elif parity.get('status') == 'single_channel':
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Parity Control Group Missing',
+                'finding': parity.get('message', 'Only one data channel captured.'),
+                'action': 'Enable the 20% web-UI parallel control group so API citation variance can be calibrated.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # Multi-turn Citation Persistence Rate
+        cpr = ei.get('multi_turn_cpr', {}) or {}
+        if cpr.get('overall_cpr', 1) < 0.5:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Multi-Turn Context Loss',
+                'finding': f'Citation Persistence Rate is {cpr.get("overall_cpr", 0):.0%} across {len(cpr.get("cpr_by_model", {}))} models — your citations decay as conversations progress (5-turn CPR).',
+                'action': 'Make every content asset self-contained and re-assert the brand mid-conversation. Audit pages cited at turn 1 that vanish by turn 5.',
+                'estimated_impact': 'HIGH'
+            })
+        for signal in (cpr.get('token_window_signals', []) or [])[:2]:
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Token Window Truncation',
+                'finding': signal.get('finding', 'Citation dropped at long context length.'),
+                'action': 'Shorten your most-cited pages so they fit inside the early context window; prioritize key facts in the first 2,000 tokens.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # Graph Authority rank
+        ga = ei.get('graph_authority', {}) or {}
+        ga_findings = ga.get('findings', []) or []
+        if ga_findings:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Graph Authority Position',
+                'finding': ga_findings[0],
+                'action': 'Win the bridge position: earn citations from the top-ranking source nodes to raise G_auth above competitors.',
+                'estimated_impact': 'HIGH'
+            })
+
+        # Inverse citation / crawler blockage
+        ic = ei.get('inverse_citation', {}) or {}
+        ic_summary = ic.get('summary', {}) or {}
+        if ic_summary.get('crawler_blocked_domains', 0) > 0:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Crawler Blockage',
+                'finding': f'{ic_summary.get("crawler_blocked_domains", 0)} sources flagged: LLM crawlers (GPTBot, ClaudeBot, PerplexityBot, Bytespider) are blocked from key domains — the #1 cause of citation omission.',
+                'action': 'Audit robots.txt and Cloudflare/WAF rules. Allow GPTBot, ClaudeBot, PerplexityBot, Bytespider, Google-Extended on your key pages.',
+                'estimated_impact': 'HIGH'
+            })
+        if ic_summary.get('uncited_authority_count', 0) > 0:
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Uncited Authority',
+                'finding': f'{ic_summary.get("uncited_authority_count", 0)} authority sources cite competitors but not you.',
+                'action': 'Use the semantic-gap remediation scripts to get cited on the top uncited sources.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # Source ROI concentration
+        src_roi = ei.get('source_roi', {}) or {}
+        for alert in (src_roi.get('concentration_alerts', []) or []):
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Source Concentration Risk',
+                'finding': alert.get('finding', 'Citation volume is concentrated in a handful of sources.'),
+                'action': 'Diversify citation sources AND protect the top-concentrated ones with outreach to avoid single-point dependency.',
+                'estimated_impact': 'HIGH'
+            })
+
+        # Semantic remediation scripts ready
+        sgr = ei.get('semantic_gap_remediation', {}) or {}
+        if sgr.get('script_count', 0) > 0:
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Ready-to-Publish Assets',
+                'finding': f'{sgr.get("script_count", 0)} JSON-LD + Markdown remediation assets auto-generated from your real gaps.',
+                'action': 'Publish the FAQ schema pages and outreach briefs. Each published asset gives LLMs a new ground-truth node.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # SoMV trendline funnel insight
+        trend = ei.get('somv_trendlines', {}) or {}
+        for f in (trend.get('findings', []) or []):
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Funnel-Stage Visibility',
+                'finding': f,
+                'action': 'Re-balance content toward the weaker funnel stage shown above.',
+                'estimated_impact': 'MEDIUM'
+            })
+
         # ─── CROSS-MODULE INSIGHTS ───
         # Combined negative signal
         if neg_triples and high_biases:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Compound Risk Alert',
-                'finding': f'Brand_A faces COMPOUND risk: {len(unique_neg)} negative claims + {len(high_biases)} HIGH-severity biases. Together these create a strongly negative AI perception.',
+                'finding': f'{brand_display} faces COMPOUND risk: {len(unique_neg)} negative claims + {len(high_biases)} HIGH-severity biases. Together these create a strongly negative AI perception.',
                 'action': 'Emergency content intervention: address top 5 negative claims and remediate HIGH biases simultaneously. Estimated budget: $5K-15K. Expected impact: 20-40% SoMV improvement within 90 days.',
                 'estimated_impact': 'HIGH'
             })

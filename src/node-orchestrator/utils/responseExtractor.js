@@ -116,62 +116,69 @@ export class ResponseExtractor {
 
   extractEntities(rawText, context) {
     const entities = [];
-    const allBrands = [
-      context.promptSession?.personaId ? 'Brand_A' : 'Brand_A',
-      ...(context.promptSession?.competitors || [])
-    ];
+    const entityConfig = context.entityConfig || {};
+    const yourBrand = entityConfig.your_brand || {};
+    const competitors = entityConfig.competitors || [];
+    const authoritySources = entityConfig.external_authority_sources || [];
 
-    const knownBrands = ['Brand_A', 'Brand_B', 'Brand_C', 'Competitor_B', 'Competitor_C'];
+    const configuredBrands = [];
+    if (yourBrand.primary_name) configuredBrands.push(yourBrand.primary_name);
+    for (const comp of competitors) {
+      if (comp.primary_name) configuredBrands.push(comp.primary_name);
+    }
 
-    for (const brand of knownBrands) {
-      const regex = new RegExp(`\\b${brand.replace(/[_]/g, '[ _-]?')}\\b`, 'gi');
+    for (const brand of configuredBrands) {
+      const escaped = this.escapeRegExp(brand).replace(/ /g, '[ _-]?');
+      const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
       const matches = rawText.match(regex);
       if (matches) {
         entities.push({
           name: brand,
-          canonical_name: brand,
+          canonical_name: brand.toLowerCase().replace(/\s+/g, '_'),
           count: matches.length,
-          type: 'brand',
+          type: brand === yourBrand.primary_name ? 'your_brand' : 'competitor',
           positions: this.findPositions(rawText, regex)
         });
       }
     }
 
-    const features = [
-      'SOC2', 'HIPAA', 'PCI DSS', 'GDPR', 'FedRAMP', 'ISO 27001',
-      'zero-trust', 'API', 'microservices', 'Kubernetes', 'Docker',
-      'machine learning', 'AI', 'automation', 'analytics',
-      'real-time', 'encryption', 'SSO', 'SAML', 'RBAC', 'MFA'
-    ];
-
-    for (const feature of features) {
-      const regex = new RegExp(`\\b${feature.replace(/[-]/g, '[-]?')}\\b`, 'gi');
-      const matches = rawText.match(regex);
-      if (matches) {
-        entities.push({
-          name: feature,
-          canonical_name: feature.toLowerCase(),
-          count: matches.length,
-          type: 'feature'
-        });
+    if (yourBrand.attributes?.features) {
+      for (const feature of yourBrand.attributes.features) {
+        const escaped = this.escapeRegExp(feature).replace(/(\s|-)/g, '[ -_]?');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+        const matches = rawText.match(regex);
+        if (matches) {
+          entities.push({
+            name: feature,
+            canonical_name: feature.toLowerCase(),
+            count: matches.length,
+            type: 'feature'
+          });
+        }
       }
     }
 
-    const sources = ['Gartner', 'Forrester', 'G2', 'Capterra', 'Reddit', 'Stack Overflow', 'TechCrunch'];
-    for (const source of sources) {
-      const regex = new RegExp(`\\b${source}\\b`, 'gi');
-      const matches = rawText.match(regex);
-      if (matches) {
-        entities.push({
-          name: source,
-          canonical_name: source.toLowerCase(),
-          count: matches.length,
-          type: 'source'
-        });
+    for (const source of authoritySources) {
+      if (source.domain) {
+        const domainName = source.domain.replace(/\.(com|org|io|net)$/i, '');
+        const regex = new RegExp(`\\b${this.escapeRegExp(domainName)}\\b`, 'gi');
+        const matches = rawText.match(regex);
+        if (matches) {
+          entities.push({
+            name: source.domain,
+            canonical_name: source.domain,
+            count: matches.length,
+            type: 'source'
+          });
+        }
       }
     }
 
     return entities;
+  }
+
+  escapeRegExp(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   findPositions(text, regex) {
@@ -199,9 +206,9 @@ export class ResponseExtractor {
       /\b(outage|downtime|breach|incident|vulnerability)\b/gi
     ];
 
-    for (const entity of entities.filter(e => e.type === 'brand')) {
+    for (const entity of entities.filter(e => e.type === 'your_brand' || e.type === 'competitor')) {
       const name = entity.name;
-      const regex = new RegExp(`[^.!?]*\\b${name.replace(/[_]/g, '[ _-]?')}\\b[^.!?]*[.!?]`, 'gi');
+      const regex = new RegExp(`[^.!?]*\\b${this.escapeRegExp(name).replace(/ /g, '[ _-]?')}\\b[^.!?]*[.!?]`, 'gi');
       const sentences = rawText.match(regex) || [];
 
       let positiveCount = 0;
@@ -230,7 +237,7 @@ export class ResponseExtractor {
 
   extractTriples(rawText, entities) {
     const triples = [];
-    const brandEntities = entities.filter(e => e.type === 'brand');
+    const brandEntities = entities.filter(e => e.type === 'your_brand' || e.type === 'competitor');
     const featureEntities = entities.filter(e => e.type === 'feature');
 
     const patterns = [
@@ -242,7 +249,7 @@ export class ResponseExtractor {
 
     for (const brand of brandEntities) {
       for (const pattern of patterns) {
-        const brandRegex = new RegExp(pattern.regex.source.replace(/(\w[\w\s]*)/, `(${brand.name}[\\w\\s]*)`), pattern.regex.flags);
+        const brandRegex = new RegExp(pattern.regex.source.replace(/(\w[\w\s]*)/, `(${this.escapeRegExp(brand.name)}[\\w\\s]*)`), pattern.regex.flags);
         let match;
         while ((match = brandRegex.exec(rawText)) !== null) {
           triples.push({

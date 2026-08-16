@@ -16,6 +16,8 @@ from urllib.parse import urlparse
 import polars as pl
 import numpy as np
 
+from brand_utils import build_brand_patterns
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,10 +25,12 @@ class ShareOfVoiceCalculator:
     def __init__(self, config: Dict):
         self.config = config
         self.entity_config = config.get('entity_maps', {}).get('entity_maps', {})
-        self.primary_brand = self.entity_config.get('your_brand', {}).get('primary_name', 'Brand_A')
-        self.competitors = [c['primary_name'] for c in self.entity_config.get('competitors', [])]
-        self.all_brands = [self.primary_brand] + self.competitors
-        self._brand_re = {b: re.compile(b.replace('_', '[_ -]?'), re.IGNORECASE) for b in self.all_brands}
+        self.primary_brand = self.entity_config.get('your_brand', {}).get('primary_name', '')
+        self.competitors = [c['primary_name'] for c in self.entity_config.get('competitors', []) if c.get('primary_name')]
+        self.all_brands = ([self.primary_brand] if self.primary_brand else []) + self.competitors
+        if not self.all_brands:
+            logger.warning("No brands configured in entity_maps.json. Share of Voice analysis requires at least your_brand.primary_name to be set.")
+        self._brand_re = {b: re.compile(p, re.IGNORECASE) for b, p in build_brand_patterns(self.entity_config).items()}
 
     def _brand_mentioned(self, text: str, brand: str) -> bool:
         if not text:

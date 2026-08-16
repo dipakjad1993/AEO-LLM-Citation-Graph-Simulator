@@ -35,12 +35,23 @@ class EmbeddingAnalyzer:
         self.normalize = self.embedding_config.get('normalize', True)
 
         self.model = None
+        self.model_loaded = False
         if SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                self.model = SentenceTransformer(self.model_name)
-                logger.info(f"Loaded embedding model: {self.model_name}")
-            except Exception as e:
-                logger.warning(f"Failed to load embedding model: {e}")
+            candidates = [self.model_name]
+            fallback = 'all-MiniLM-L6-v2'
+            if self.model_name != fallback:
+                candidates.append(fallback)
+            for candidate in candidates:
+                try:
+                    self.model = SentenceTransformer(candidate)
+                    self.model_name = candidate
+                    self.model_loaded = True
+                    logger.info(f"Loaded embedding model: {candidate}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to load embedding model {candidate}: {e}")
+        if not self.model_loaded:
+            logger.warning("No embedding model available; semantic drift/clustering will be skipped")
 
     def analyze(self, df: pl.DataFrame) -> Dict:
         results = {
@@ -210,21 +221,23 @@ class EmbeddingAnalyzer:
 
     def _detect_semantic_drift(self, brand_profiles: Dict) -> List[Dict]:
         drifts = []
-        if 'Brand_A' not in brand_profiles:
+        entity_config = self.config.get('entity_maps', {}).get('entity_maps', {})
+        primary_brand = entity_config.get('your_brand', {}).get('primary_name', '')
+        if not primary_brand or primary_brand not in brand_profiles:
             return drifts
-        brand_a_centroid = np.array(brand_profiles['Brand_A']['centroid']).reshape(1, -1)
+        brand_a_centroid = np.array(brand_profiles[primary_brand]['centroid']).reshape(1, -1)
         for brand, profile in brand_profiles.items():
-            if brand == 'Brand_A':
+            if brand == primary_brand:
                 continue
             other_centroid = np.array(profile['centroid']).reshape(1, -1)
             similarity = float(cosine_similarity(brand_a_centroid, other_centroid)[0][0])
             drift_score = 1.0 - similarity
             if drift_score > self.similarity_threshold:
                 drifts.append({
-                    'brand_a_vs': brand, 'cosine_similarity': similarity,
+                    'primary_brand_vs': brand, 'cosine_similarity': similarity,
                     'drift_score': drift_score,
                     'interpretation': self._interpret_drift(similarity),
-                    'brand_a_intra_sim': brand_profiles['Brand_A']['mean_intra_similarity'],
+                    'primary_brand_intra_sim': brand_profiles[primary_brand]['mean_intra_similarity'],
                     'competitor_intra_sim': profile['mean_intra_similarity']
                 })
         drifts.sort(key=lambda x: x['drift_score'], reverse=True)
@@ -282,13 +295,18 @@ class EmbeddingAnalyzer:
         embeddings = info['embeddings']
         metadata = info.get('metadata', [])
         sample_size = len(embeddings)
+        # HDBSCAN requires at least min_samples + 1 points; UMAP needs >= n_neighbors
+        if sample_size < 5:
+            return []
         try:
             from umap import UMAP
-            reducer = UMAP(n_components=2, random_state=42, n_neighbors=10, min_dist=0.3)
+            n_neighbors = min(10, max(2, sample_size - 1))
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=n_neighbors, min_dist=0.3)
             reduced = reducer.fit_transform(embeddings)
             try:
                 from hdbscan import HDBSCAN
-                clusterer = HDBSCAN(min_cluster_size=8, min_samples=3)
+                min_cluster = max(2, min(8, sample_size // 2))
+                clusterer = HDBSCAN(min_cluster_size=min_cluster, min_samples=3)
                 labels = clusterer.fit_predict(embeddings)
             except ImportError:
                 labels = np.zeros(sample_size)

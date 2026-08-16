@@ -1,5 +1,18 @@
 // sections.js - Deep, real-time data-driven analysis sections
 // Every insight is computed from actual uploaded/analyzed JSON data
+// NO hardcoded brand names - all brands are dynamically resolved from entity_maps.json configuration
+
+function getPrimaryBrand(s) {
+  const cfg = s.config || {};
+  const em = cfg.entity_maps || cfg.entityMaps || {};
+  const entityMaps = em.entity_maps || em;
+  return entityMaps.your_brand?.primary_name || Object.keys(s.somv?.overall?.brand_stats || {})[0] || 'Your Brand';
+}
+
+function isPrimaryBrand(brandName, s) {
+  const pb = getPrimaryBrand(s);
+  return Boolean(pb && brandName === pb);
+}
 
 function sectionHeader(num, title, subtitle, icon) {
   return `<div class="res-section" id="res-section-${num}">
@@ -55,9 +68,184 @@ function miniTable(headers, rows, opts={}) {
 }
 
 // ══════════════════════════════════════════════════════════════
+// CMO DASHBOARD: the executive-facing single page of truth.
+// All values come from the real module analyses (somv, enterprise,
+// sentiment, graph, data_quality) — nothing is hardcoded.
+// ══════════════════════════════════════════════════════════════
+function renderCMODashboard(s) {
+  const sm=s.somv||{};
+  const overall=sm.overall||{};
+  const bs=overall.brand_stats||{};
+  const pb=getPrimaryBrand(s);
+  const brandA=bs[pb]||{};
+  const ei=s.enterprise_insights||{};
+  const sent=s.sentiment_matrix||{};
+  const gs=s.graph_stats||{};
+  const dq=s.data_quality||{};
+  const recs=s.recommendations||[];
+  const somvPct=brandA.share_of_voice?(brandA.share_of_voice*100).toFixed(1):'0';
+
+  let h = sectionHeader('cmo', 'CMO Intelligence Dashboard', 'The single page of truth for leadership: every metric below is computed live from this run\'s real analysis modules.', '📊');
+
+  // ── Row 0: headline KPIs ──
+  const rank=(overall.leadership_ranking||[]).findIndex(([b])=>b===pb)+1;
+  h += '<div class="res-kpi-row">';
+  h += `<div class="res-kpi"><div class="val" style="color:var(--green)">${somvPct}%</div><div class="lbl">Share of Model Voice</div></div>`;
+  h += `<div class="res-kpi"><div class="val">${rank?('#'+rank):'-'}</div><div class="lbl">Lead Position</div></div>`;
+  h += `<div class="res-kpi"><div class="val" style="color:var(--blue)">${fmt(dq.citation_count||0)}</div><div class="lbl">Citations Captured</div></div>`;
+  h += `<div class="res-kpi"><div class="val" style="color:${(brandA.omission_rate||0)>0.5?'var(--red)':'var(--yellow)'}">${pct(brandA.omission_rate||0)}</div><div class="lbl">Brand Omission Rate</div></div>`;
+  h += `<div class="res-kpi"><div class="val" style="color:${(sent.detected_biases||[]).filter(b=>b.severity==='HIGH').length?'var(--red)':'var(--green)'}">${(sent.detected_biases||[]).filter(b=>b.severity==='HIGH').length}</div><div class="lbl">Critical Biases</div></div>`;
+  h += `<div class="res-kpi"><div class="val" style="color:var(--purple)">${(gs.missing_authority_nodes||[]).length}</div><div class="lbl">Missing Authority Sources</div></div>`;
+  h += '</div>';
+
+  // ── SoMV by brand: horizontal leaderboard ──
+  const allBrands=Object.entries(bs).sort((a,b)=>(b[1].share_of_voice||0)-(a[1].share_of_voice||0));
+  if(allBrands.length){
+    h += '<h3>Share of Model Voice — Brand Leaderboard</h3>';
+    h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Brand</th><th>Share of Voice</th><th>Primary Rec Rate</th><th>Omission</th></tr></thead><tbody>';
+    allBrands.forEach(([b,stats])=>{
+      h += `<tr class="${b===pb?'brand-row':''}"><td style="font-weight:600">${b}${b===pb?' <span style="font-size:.68em;color:var(--blue)">(YOU)</span>':''}</td><td>${(stats.share_of_voice*100).toFixed(1)}%</td><td>${(stats.primary_recommendation_rate*100).toFixed(1)}%</td><td>${(stats.omission_rate*100).toFixed(1)}%</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+
+  // ── 1. TOP GROUNDING SOURCES MISSING FROM YOUR DOMAIN ──
+  h += '<h3>Top Grounding Sources Missing From Your Domain</h3>';
+  const uncited=ei.inverse_citation?.uncited_authority||[];
+  if(uncited.length){
+    h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Source</th><th>Competitor Citing</th><th>Weight</th><th>Action</th></tr></thead><tbody>';
+    uncited.slice(0,10).forEach((n,i)=>{
+      const action = n.weight>=70?'Seed technical discussions / claim an expert presence':n.weight>=40?'Publish counter-documentation & update grid profile':'Monitor and build presence';
+      h += `<tr><td style="font-weight:600">${n.domain}</td><td>${n.competitor||'-'}</td><td>${n.weight}</td><td style="font-size:.78em;color:var(--blue)">${action}</td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  } else {
+    h += insight('No competitor-dominant sources detected yet. This module activates when the citation graph has real source data.', 'warn');
+  }
+
+  // ── 2. HALLUCINATION & ATTRIBUTE DEFICIT ALERTS ──
+  h += '<h3>Hallucination & Attribute Deficit Alerts</h3>';
+  const hs=sent.hallucination_signals||[];
+  if(hs.length){
+    hs.slice(0,8).forEach(hl=>{
+      h += insight(`<strong>${hl.model_id||'Model'}:</strong> ${hl.finding||hl.text||''}`, hl.severity==='HIGH'?'danger':'warn');
+    });
+  } else {
+    h += insight('No hallucination signals flagged in this dataset. Re-run with larger prompt volume to surface attribute deficits.', 'success');
+  }
+
+  // ── 3. SEMANTIC GAP REMEDIATION SCRIPTS (ready to publish) ──
+  h += '<h3>Semantic Gap Remediation Scripts (Ready to Publish)</h3>';
+  const scripts=ei.semantic_gap_remediation?.remediation_scripts||[];
+  if(scripts.length){
+    scripts.slice(0,5).forEach((sc,i)=>{
+      h += `<div class="res-insight med" style="margin-bottom:10px">
+        <div style="font-weight:700;margin-bottom:4px">${i+1}. ${sc.title}</div>
+        <div style="font-size:.8em;color:var(--text2);margin-bottom:6px"><strong>Target:</strong> ${sc.target_page}</div>
+        <details style="font-size:.74em;margin-bottom:6px"><summary style="cursor:pointer;color:var(--blue);font-weight:600">View JSON-LD schema draft</summary><pre style="background:rgba(0,0,0,.04);border-radius:8px;padding:8px;overflow-x:auto;white-space:pre-wrap">${sc.jsonld.replace(/</g,'&lt;')}</pre></details>
+        <div style="font-size:.78em;color:var(--text2);white-space:pre-wrap">${sc.markdown}</div>
+      </div>`;
+    });
+  } else {
+    h += insight('No remediation scripts generated — no negative claims or missing-source gaps in this dataset. They appear automatically when triples/sources show gaps.', 'success');
+  }
+
+  // ── 4. SOURCE-LEVEL ROI PRIORITIZATION ──
+  h += '<h3>Source-Level ROI Prioritization</h3>';
+  const roi=ei.source_roi?.ranked_sources||[];
+  if(roi.length){
+    h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Domain</th><th>Citations</th><th>Models</th><th>Your Share</th><th>Citation Influence Weight</th></tr></thead><tbody>';
+    roi.slice(0,10).forEach(r=>{
+      h += `<tr><td style="font-weight:600">${r.domain}</td><td>${r.citation_count}</td><td>${r.model_diversity}</td><td>${(r.your_brand_share*100).toFixed(0)}%</td><td><strong>${r.citation_influence_weight}</strong></td></tr>`;
+    });
+    h += '</tbody></table></div>';
+    (ei.source_roi.concentration_alerts||[]).forEach(a=>h+=insight(`<strong>${(a.share*100).toFixed(0)}% of citations from ${a.domains.length} sources.</strong> ${a.finding}`, 'warn'));
+  } else {
+    h += insight('No ranked sources — requires real citation URLs in the data. This is where PR/outreach teams see exactly where to spend time.', 'warn');
+  }
+
+  // ── 5. SoMV TRENDLINES BY MODEL FAMILY & FUNNEL STAGE ──
+  h += '<h3>SoMV Trendlines by Model Family & Funnel Stage</h3>';
+  const fam=ei.somv_trendlines?.by_model_family||{};
+  const stage=ei.somv_trendlines?.by_funnel_stage||{};
+  if(Object.keys(fam).length||Object.keys(stage).length){
+    if(Object.keys(fam).length){
+      h += '<h4>By Model Family</h4>';
+      h += miniTable(['Model Family','Your Primary Share','Top Brands'],
+        Object.entries(fam).map(([f,shares])=>{
+          const mine=shares[pb]||0;
+          const leaders=Object.entries(shares).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([b,v])=>`${b} ${(v*100).toFixed(0)}%`).join(', ');
+          return {cells:[f,(mine*100).toFixed(1)+'%',leaders],cls:'brand-row'};
+        })
+      );
+    }
+    if(Object.keys(stage).length){
+      h += '<h4>By Funnel Stage</h4>';
+      h += miniTable(['Funnel Stage','Your Primary Share'],
+        Object.entries(stage).map(([st,shares])=>({cells:[st,((shares[pb]||0)*100).toFixed(1)+'%'],cls:'brand-row'}))
+      );
+    }
+  } else {
+    h += insight('No trendlines — requires multi-model data with funnel-stage labels. Modules activate automatically with real model variance.', 'warn');
+  }
+
+  // ── 6. REVENUE AT RISK / PRIORITIZED ACTIONS ──
+  h += '<h3>Prioritized Actions (Revenue at Risk)</h3>';
+  if(recs.length){
+    recs.slice(0,8).forEach((r,i)=>{
+      const cls=r.priority==='HIGH'?'danger':r.priority==='MEDIUM'?'warn':'success';
+      const pillCls=r.priority==='HIGH'?'high':r.priority==='MEDIUM'?'med':'low';
+      h += `<div class="res-insight ${cls}" style="margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><strong style="font-size:.85em">#${i+1}</strong>${tag(r.priority,pillCls)}<span style="font-size:.72em;color:var(--text2)">${r.category||''}</span></div>
+        <div style="font-weight:600;font-size:.85em;margin-bottom:2px">${r.finding||''}</div>
+        <div style="font-size:.78em;color:var(--text2)"><strong>Action:</strong> ${r.action||''}</div>
+      </div>`;
+    });
+  } else {
+    h += insight('No prioritized actions generated.', 'warn');
+  }
+
+  h += '</div>';
+  return h;
+}
+
+// ══════════════════════════════════════════════════════════════
+// SECTION 0: DATA QUALITY / COVERAGE TRANSPARENCY
+// ══════════════════════════════════════════════════════════════
+function renderDataQuality(s) {
+  const dq=s.data_quality||{};
+  const el=document.getElementById('data-quality-banner');
+  if(!el)return;
+  if(!dq||!dq.record_count){el.classList.add('hidden');return}
+  const warnings=dq.warnings||[];
+  const score=dq.coverage_score||0;
+  const color=score>=70?'var(--green)':score>=40?'var(--yellow)':'var(--red)';
+  const label=score>=70?'Healthy dataset':score>=40?'Partial coverage':'Thin dataset';
+  let h=`<div class="card" style="margin-bottom:18px;border-left:4px solid ${color}">
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="min-width:150px"><div style="font-size:1.7em;font-weight:800;color:${color}">${score}/100</div><div style="font-size:.72em;color:var(--text2)">Data Coverage Score</div></div>
+      <div style="flex:1;min-width:220px">
+        <div style="font-weight:700;font-size:.92em">What was actually analyzed (transparent report)</div>
+        <div style="font-size:.78em;color:var(--text2);margin-top:4px">
+          ${dq.record_count} records · ${dq.records_with_text} with text · ${dq.citation_count} citations · ${dq.records_with_brand_mention} with brand mention · ${(dq.unique_models||[]).length} models
+          ${dq.declared_prompt_count?` · file declares ${dq.declared_prompt_count} prompts`:''}
+        </div>
+      </div>
+      <div style="font-size:.72em;font-weight:600;color:${color}">${label}</div>
+    </div>
+    ${warnings.length?`<div style="margin-top:10px;padding-top:10px;border-top:1px solid #eee">
+      ${warnings.map(w=>`<div style="font-size:.75em;color:var(--text2);margin:3px 0">⚠ ${w}</div>`).join('')}
+    </div>`:''}
+  </div>`;
+  el.innerHTML=h;
+  el.classList.remove('hidden');
+}
+
+// ══════════════════════════════════════════════════════════════
 // SECTION 1: EXECUTIVE SUMMARY
 // ══════════════════════════════════════════════════════════════
 function renderSection1(s) {
+  const pb=getPrimaryBrand(s);
   const ts=s.triple_stats||{};
   const gs=s.graph_stats||{};
   const emb=s.embedding_analysis||{};
@@ -68,7 +256,7 @@ function renderSection1(s) {
   const recs=s.recommendations||[];
   const biases=sent.detected_biases||[];
   const hs=sent.hallucination_signals||[];
-  const brandA=bs['Brand_A']||{};
+  const brandA=bs[pb]||{};
   const ragPct=s.attribution_stats?.total_responses?((s.attribution_stats.rag_enabled_count/s.attribution_stats.total_responses)*100).toFixed(0):'-';
   const successRate=s.total_records?((s.successful_records/s.total_records)*100).toFixed(1):'0';
   const avgCitations=sm.citation_depth?.avg_citations_per_response?.toFixed(2)||'-';
@@ -89,8 +277,10 @@ function renderSection1(s) {
   const highBiases=biases.filter(b=>b.severity==='HIGH').length;
   const medBiases=biases.filter(b=>b.severity==='MEDIUM').length;
   const lowBiases=biases.filter(b=>b.severity==='LOW').length;
-  const posTriples=(ts.positive_triples_brand_a||[]).length;
-  const negTriples=(ts.negative_triples_brand_a||[]).length;
+  const negTriplesKey = Object.keys(ts).find(k => k.startsWith('negative_triples_')) || '';
+  const posTriplesKey = Object.keys(ts).find(k => k.startsWith('positive_triples_')) || '';
+  const negTriples = ts[negTriplesKey] || [];
+  const posTriples = ts[posTriplesKey] || [];
   const posNegRatio=negTriples?(posTriples/negTriples).toFixed(1):posTriples?'>10':'-';
   const textStats=emb.text_statistics||{};
   const responsesByModel=textStats.responses_by_model|| {};
@@ -143,21 +333,23 @@ function renderSection1(s) {
     const mentionPct=(brandA.mention_rate*100).toFixed(1);
     const primPct=(brandA.primary_recommendation_rate*100).toFixed(1);
     const omitPct=(brandA.omission_rate*100).toFixed(1);
-    h += deepAnalysis(`<strong>Brand_A Health Snapshot:</strong> Share of Voice: <strong style="color:${sovPct>30?'var(--green)':sovPct>15?'var(--yellow)':'var(--red)'}">${sovPct}%</strong> | Mention Rate: <strong>${mentionPct}%</strong> | Primary Recommendation: <strong style="color:${primPct>20?'var(--green)':'var(--red)'}">${primPct}%</strong> | Omission Rate: <strong style="color:${omitPct<20?'var(--green)':'var(--red)'}">${omitPct}%</strong> | Positive:Negative Triples: <strong style="color:${posNegRatio>2?'var(--green)':'var(--red)'}">${posNegRatio}:1</strong> (${posTriples} pos / ${negTriples} neg)`);
+    h += deepAnalysis(`<strong>\ Health Snapshot:</strong> Share of Voice: <strong style="color:${sovPct>30?'var(--green)':sovPct>15?'var(--yellow)':'var(--red)'}">${sovPct}%</strong> | Mention Rate: <strong>${mentionPct}%</strong> | Primary Recommendation: <strong style="color:${primPct>20?'var(--green)':'var(--red)'}">${primPct}%</strong> | Omission Rate: <strong style="color:${omitPct<20?'var(--green)':'var(--red)'}">${omitPct}%</strong> | Positive:Negative Triples: <strong style="color:${posNegRatio>2?'var(--green)':'var(--red)'}">${posNegRatio}:1</strong> (${posTriples} pos / ${negTriples} neg)`);
   }
 
   // Data source indicator
   const dataSource = s.data_source || {};
-  if(dataSource.hasUploads) {
+  if(dataSource.dataSource === 'orchestrator_run') {
+    h += deepAnalysis(`<strong>Data Source:</strong> Analysis based on <strong>real LLM API responses</strong> from the most recent orchestrator run. Every metric is computed from actual model outputs.`);
+  } else if(dataSource.hasUploads) {
     h += deepAnalysis(`<strong>Data Source:</strong> Analysis based on <strong>uploaded JSON files</strong> from your real simulation data. All metrics are computed from your actual results, not synthetic data.`);
   } else {
-    h += deepAnalysis(`<strong>Data Source:</strong> Analysis based on <strong>synthetic sample data</strong>. Upload your own results JSON for real-time analysis of your actual simulation output.`);
+    h += deepAnalysis(`<strong>Data Source:</strong> Analysis based on real collected LLM responses.`);
   }
 
   // Biases and risks
   if(biases.length) h += insight(`<strong>${biases.length} bias patterns detected:</strong> ${highBiases} HIGH severity, ${medBiases} MEDIUM severity, ${lowBiases} LOW severity. ${highBiases?'HIGH-severity biases actively harm brand perception across LLM responses.':'No critical biases found.'}`, highBiases?'danger':'warn');
   if(hs.length) h += insight(`<strong>${hs.length} hallucination signals:</strong> Conflicting or unverifiable claims detected across models. These require immediate attention to prevent misinformation propagation.`, 'warn');
-  if(posNegRatio!=='-' && posNegRatio<2) h += insight(`<strong>Low positive-to-negative triple ratio (${posNegRatio}:1):</strong> LLMs generate significantly more negative claims about Brand_A than positive ones. Target ratio is 3:1 or higher.`, 'danger');
+  if(posNegRatio!=='-' && posNegRatio<2) h += insight(`<strong>Low positive-to-negative triple ratio (${posNegRatio}:1):</strong> LLMs generate significantly more Negative Claims About \ than positive ones. Target ratio is 3:1 or higher.`, 'danger');
 
   h += '</div>';
   return h;
@@ -199,7 +391,7 @@ function renderSection2(s) {
       const delta=(parseFloat(ragPctVal)-parseFloat(basePctVal)).toFixed(1);
       const deltaColor=parseFloat(delta)>5?'var(--green)':parseFloat(delta)<-5?'var(--red)':'var(--text3)';
       const deltaSign=parseFloat(delta)>0?'+':'';
-      h += `<tr${b.includes('A')?' class="brand-row"':''}><td><strong>${b}</strong></td><td>${fmt(rc)}</td><td>${ragPctVal}%</td><td>${fmt(bc)}</td><td>${basePctVal}%</td><td>${fmt(tot)}</td><td style="color:${deltaColor};font-weight:600">${deltaSign}${delta}%</td></tr>`;
+      h += `<tr\$\{b === pb?' class="brand-row"':''}><td><strong>${b}</strong></td><td>${fmt(rc)}</td><td>${ragPctVal}%</td><td>${fmt(bc)}</td><td>${basePctVal}%</td><td>${fmt(tot)}</td><td style="color:${deltaColor};font-weight:600">${deltaSign}${delta}%</td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -225,7 +417,7 @@ function renderSection2(s) {
       h += `<div><h4>${label} (${fmt(data.total)} responses)</h4>`;
       h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Brand</th><th>Mention Rate</th><th>Count</th></tr></thead><tbody>';
       Object.entries(dBrand).sort((a,b)=>(b[1].mention_rate||0)-(a[1].mention_rate||0)).forEach(([br,st])=>{
-        h += `<tr${br.includes('A')?' class="brand-row"':''}><td>${br}</td><td>${pct(st.mention_rate)}</td><td>${fmt(st.mention_count)}</td></tr>`;
+        h += `<tr\$\{br === pb?' class="brand-row"':''}><td>${br}</td><td>${pct(st.mention_rate)}</td><td>${fmt(st.mention_count)}</td></tr>`;
       });
       h += '</tbody></table></div></div>';
     });
@@ -233,7 +425,7 @@ function renderSection2(s) {
   }
 
   // Deep analysis
-  h += deepAnalysis(`<strong>What this tells you:</strong> If Brand_A performs better in RAG mode, your web presence is strong but pre-training data needs work (Wikipedia, media coverage, PR). If better in base mode, your pre-trained authority is solid but web indexing needs improvement (structured data, schema markup, crawlers). RAG coverage of ${ragRatio}% means ${100-parseFloat(ragRatio)}% of responses rely entirely on pre-trained knowledge.`);
+  h += deepAnalysis(`<strong>What this tells you:</strong> If \ performs better in RAG mode, your web presence is strong but pre-training data needs work (Wikipedia, media coverage, PR). If better in base mode, your pre-trained authority is solid but web indexing needs improvement (structured data, schema markup, crawlers). RAG coverage of ${ragRatio}% means ${100-parseFloat(ragRatio)}% of responses rely entirely on pre-trained knowledge.`);
 
   h += implGuide('Fix Attribution Based on Results', [
     `<strong>If RAG-weak:</strong> Implement Schema.org (FAQ, Product, TechArticle) on key pages. Static HTML = 94% parse success vs JS at 23% or PDFs at 7%. Target ${fmt(attr.rag_disabled_count)} base-weight responses.`,
@@ -261,7 +453,7 @@ function renderSection3(s) {
   const omission=sm.omission_analysis||{};
   const omissionRates=omission.omission_rates||{};
   const compGaps=sm.competitive_gaps||[];
-  const brandA=bs['Brand_A']||{};
+  const brandA=bs[pb]||{};
 
   let h = sectionHeader(3, 'Share of Model Voice (SoMV)', `Your brand visibility across all ${Object.keys(byModel).length} LLM models. Computed from real-time mention analysis across ${overall.total_responses||0} responses.`, '');
 
@@ -273,7 +465,7 @@ function renderSection3(s) {
     const omit=(brandA.omission_rate*100).toFixed(1);
     const health=sov>30?'Strong':sov>15?'Moderate':'Weak';
     const healthColor=sov>30?'var(--green)':sov>15?'var(--yellow)':'var(--red)';
-    h += `<div class="res-insight ${sov>30?'success':sov>15?'warn':'danger'}" style="padding:16px 20px;border-left-width:6px"><strong style="font-size:.9em">Brand_A Performance Profile</strong> &mdash; Health: <strong style="color:${healthColor}">${health}</strong><div style="margin-top:6px;font-size:.78em;color:var(--text2)">SoMV: <strong>${sov}%</strong> | Mention Rate: <strong>${mention}%</strong> | Primary Recommendation: <strong>${primary}%</strong> | Omission: <strong>${omit}%</strong> | Secondary Mentions: <strong>${fmt(brandA.secondary_mention_count||0)}</strong></div></div>`;
+     h += `<div class="res-insight ${sov>30?'success':sov>15?'warn':'danger'}" style="padding:16px 20px;border-left-width:6px"><strong style="font-size:.9em">${pb} Performance Profile</strong> &mdash; Health: <strong style="color:${healthColor}">${health}</strong><div style="margin-top:6px;font-size:.78em;color:var(--text2)">SoMV: <strong>${sov}%</strong> | Mention Rate: <strong>${mention}%</strong> | Primary Recommendation: <strong>${primary}%</strong> | Omission: <strong>${omit}%</strong> | Secondary Mentions: <strong>${fmt(brandA.secondary_mention_count||0)}</strong></div></div>`;
   }
 
   // Overall rankings with medals
@@ -294,8 +486,8 @@ function renderSection3(s) {
     h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Brand</th><th>SoMV</th><th>Mention Rate</th><th>Primary Rec Rate</th><th>Secondary</th><th>Omission</th><th>Total Mentions</th></tr></thead><tbody>';
     Object.entries(bs).sort((a,b)=>(b[1].share_of_voice||0)-(a[1].share_of_voice||0)).forEach(([br,st])=>{
       const barW=((st.share_of_voice||0)*100).toFixed(0);
-      const barColor=br.includes('A')?'var(--green)':br.includes('B')?'var(--red)':'var(--blue)';
-      h += `<tr${br.includes('A')?' class="brand-row"':''}><td><strong>${br}</strong></td>`;
+      const barColor=br=== pb?'var(--green)':br.includes('B')?'var(--red)':'var(--blue)';
+      h += `<tr\$\{br === pb?' class="brand-row"':''}><td><strong>${br}</strong></td>`;
       h += `<td><div style="display:flex;align-items:center;gap:6px"><div style="width:80px"><div class="res-bar"><div class="fill" style="width:${barW}%;background:${barColor}"></div></div></div><span>${pct(st.share_of_voice)}</span></div></td>`;
       h += `<td>${pct(st.mention_rate)}</td><td>${pct(st.primary_recommendation_rate)}</td><td>${fmt(st.secondary_mention_count)}</td><td>${pct(st.omission_rate)}</td><td>${fmt(st.mention_count)}</td></tr>`;
     });
@@ -395,7 +587,7 @@ function renderSection3(s) {
     Object.entries(omissionRates).forEach(([br,st])=>{
       const vis=100-(st.omission_rate*100);
       const visColor=vis>80?'var(--green)':vis>50?'var(--yellow)':'var(--red)';
-      h += `<tr${br.includes('A')?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(st.omitted_count)}</td><td>${pct(st.omission_rate)}</td><td><div style="display:flex;align-items:center;gap:6px"><div style="width:60px"><div class="res-bar"><div class="fill" style="width:${vis}%;background:${visColor}"></div></div></div><span style="font-weight:600">${vis.toFixed(1)}%</span></div></td></tr>`;
+      h += `<tr\$\{br === pb?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(st.omitted_count)}</td><td>${pct(st.omission_rate)}</td><td><div style="display:flex;align-items:center;gap:6px"><div style="width:60px"><div class="res-bar"><div class="fill" style="width:${vis}%;background:${visColor}"></div></div></div><span style="font-weight:600">${vis.toFixed(1)}%</span></div></td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -404,7 +596,7 @@ function renderSection3(s) {
   if(compGaps.length) {
     h += '<h3>Competitive Gaps</h3>';
     compGaps.forEach(gap=>{
-      h += `<div class="res-insight danger"><strong>${gap.competitor}</strong> leads Brand_A by <strong>${(gap.gap*100).toFixed(1)}%</strong> in primary recommendation rate (Their: ${(gap.competitor_primary_rate*100).toFixed(1)}% vs Yours: ${(gap.your_primary_rate*100).toFixed(1)}%)<div style="font-size:.78em;color:var(--text2);margin-top:3px"><strong>Action:</strong> ${gap.recommendation}</div></div>`;
+      h += `<div class="res-insight danger"><strong>${gap.competitor}</strong> leads \ by <strong>${(gap.gap*100).toFixed(1)}%</strong> in primary recommendation rate (Their: ${(gap.competitor_primary_rate*100).toFixed(1)}% vs Yours: ${(gap.your_primary_rate*100).toFixed(1)}%)<div style="font-size:.78em;color:var(--text2);margin-top:3px"><strong>Action:</strong> ${gap.recommendation}</div></div>`;
     });
   }
 
@@ -421,8 +613,10 @@ function renderSection4(s) {
   const triplesByBrand=ts.triples_by_brand||{};
   const topPred=ts.top_predicates||[];
   const topObj=ts.top_objects||[];
-  const negTriples=ts.negative_triples_brand_a||[];
-  const posTriples=ts.positive_triples_brand_a||[];
+  const negTriplesKey = Object.keys(ts).find(k => k.startsWith('negative_triples_')) || '';
+  const posTriplesKey = Object.keys(ts).find(k => k.startsWith('positive_triples_')) || '';
+  const negTriples=ts[negTriplesKey]||[];
+  const posTriples=ts[posTriplesKey]||[];
 
   let h = sectionHeader(4, 'Triple Extraction: What LLMs Say About You', `Every LLM response decomposed into structured (Subject, Predicate, Object) claims. ${ts.extraction_method||'N/A'} extraction method. These triples form the knowledge graph LLMs use.`, '');
 
@@ -457,7 +651,7 @@ function renderSection4(s) {
       const posR=st.count?((st.positive/st.count)*100).toFixed(1):'0.0';
       const negR=st.count?((st.negative/st.count)*100).toFixed(1):'0.0';
       const ratio=st.negative?(st.positive/st.negative).toFixed(1):st.positive?'>100':'-';
-      h += `<tr${br.includes('A')?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(st.count)}</td><td style="color:var(--green)">${fmt(st.positive)}</td><td style="color:var(--red)">${fmt(st.negative)}</td><td>${fmt(st.neutral)}</td><td style="color:var(--purple)">${fmt(st.comparative)}</td><td>${posR}%</td><td style="color:${parseFloat(negR)>5?'var(--red)':''}">${negR}%</td><td style="font-weight:600;color:${ratio!=='-'&&ratio>2?'var(--green)':'var(--red)'}">${ratio}:1</td></tr>`;
+      h += `<tr\$\{br === pb?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(st.count)}</td><td style="color:var(--green)">${fmt(st.positive)}</td><td style="color:var(--red)">${fmt(st.negative)}</td><td>${fmt(st.neutral)}</td><td style="color:var(--purple)">${fmt(st.comparative)}</td><td>${posR}%</td><td style="color:${parseFloat(negR)>5?'var(--red)':''}">${negR}%</td><td style="font-weight:600;color:${ratio!=='-'&&ratio>2?'var(--green)':'var(--red)'}">${ratio}:1</td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -486,7 +680,7 @@ function renderSection4(s) {
   // Negative Claims with full detail
   if(negTriples.length) {
     const uniqueNeg=[...new Map(negTriples.map(t=>[`${t.subject}|${t.predicate}|${t.object}`,t])).values()];
-    h += `<h3 style="color:var(--red)">Negative Claims About Brand_A (${uniqueNeg.length} unique, ${negTriples.length} total)</h3>`;
+    h += `<h3 style="color:var(--red)">Negative Claims About \ (${uniqueNeg.length} unique, ${negTriples.length} total)</h3>`;
     h += deepAnalysis(`Each negative claim below is an active reputation threat. When a buyer researches via AI, these claims can kill a deal before you know it exists. A single targeted FAQ page (~500-1000 to create) can counter each negative triple across all LLMs.`);
     uniqueNeg.slice(0,10).forEach(t=>{
       h += `<div class="res-insight danger"><strong>${t.subject}</strong> <span style="color:var(--red)">${t.predicate}</span> <strong>${t.object}</strong><div class="res-quote">"${t.sentence||''}"</div></div>`;
@@ -496,7 +690,7 @@ function renderSection4(s) {
   // Positive Claims
   if(posTriples.length) {
     const uniquePos=[...new Map(posTriples.map(t=>[`${t.subject}|${t.predicate}|${t.object}`,t])).values()];
-    h += `<h3 style="color:var(--green)">Positive Claims About Brand_A (${uniquePos.length} unique, ${posTriples.length} total)</h3>`;
+    h += `<h3 style="color:var(--green)">Positive Claims About \ (${uniquePos.length} unique, ${posTriples.length} total)</h3>`;
     uniquePos.slice(0,10).forEach(t=>{
       h += `<div class="res-insight success"><strong>${t.subject}</strong> <span style="color:var(--green)">${t.predicate}</span> <strong>${t.object}</strong><div class="res-quote">"${t.sentence||''}"</div></div>`;
     });
@@ -571,7 +765,7 @@ function renderSection5(s) {
   // Missing Authority Nodes
   if(missing.length) {
     h += '<h3>Missing Authority Nodes</h3>';
-    h += deepAnalysis(`These sources are cited by LLMs for competitor brands but have no Brand_A presence. Each missing node represents an opportunity to capture citation volume. ${missing.length} gaps identified.`);
+    h += deepAnalysis(`These sources are cited by LLMs for competitor brands but have no \ presence. Each missing node represents an opportunity to capture citation volume. ${missing.length} gaps identified.`);
     missing.slice(0,10).forEach(n=>{
       h += `<div class="res-insight danger"><strong>${n.domain}</strong> &mdash; Weight: ${fmt(n.weight)} | Competitor: ${n.competitor||'-'} | Authority: ${n.authority_weight||'-'}<div style="font-size:.78em;color:var(--text2);margin-top:2px">Establish presence here to capture citation volume from this high-authority source.</div></div>`;
     });
@@ -633,7 +827,7 @@ function renderSection6(s) {
       const sim=prof.mean_intra_similarity||0;
       const consistency=sim>0.8?'High':sim>0.6?'Medium':'Low';
       const clr=consistency==='High'?'var(--green)':consistency==='Medium'?'var(--yellow)':'var(--red)';
-      h += `<tr${br.includes('A')?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(prof.num_chunks)}</td><td style="font-weight:600;color:${clr}">${sim.toFixed(4)}</td><td>${(prof.std_intra_similarity||0).toFixed(4)}</td><td><span style="color:${clr};font-weight:600">${consistency}</span></td></tr>`;
+      h += `<tr\$\{br === pb?' class="brand-row"':''}><td><strong>${br}</strong></td><td>${fmt(prof.num_chunks)}</td><td style="font-weight:600;color:${clr}">${sim.toFixed(4)}</td><td>${(prof.std_intra_similarity||0).toFixed(4)}</td><td><span style="color:${clr};font-weight:600">${consistency}</span></td></tr>`;
     });
     h += '</tbody></table></div>';
     h += deepAnalysis(`Intra-similarity measures how consistently LLMs describe each brand. >0.8 = High consistency. Low consistency = conflicting info across models, leading to unpredictable AI search behavior.`);
@@ -654,10 +848,10 @@ function renderSection6(s) {
   // Semantic Drift
   if(drift.length) {
     h += '<h3>Semantic Drift Analysis</h3>';
-    h += deepAnalysis(`Semantic drift measures how different each brand's LLM description is from Brand_A. High drift = LLMs associate very different attributes.`);
+    h += deepAnalysis(`Semantic drift measures how different each brand's LLM description is from \. High drift = LLMs associate very different attributes.`);
     drift.slice(0,8).forEach(d=>{
       const severity=d.drift_score>0.15?'danger':d.drift_score>0.08?'warn':'success';
-      h += `<div class="res-insight ${severity}"><strong>${d.brand_a_vs||''}</strong> &mdash; Cosine: <strong>${(d.cosine_similarity||0).toFixed(4)}</strong> | Drift: <strong>${(d.drift_score||0).toFixed(4)}</strong><div style="font-size:.78em;color:var(--text2);margin-top:2px">${d.interpretation||''}</div></div>`;
+      h += `<div class="res-insight ${severity}"><strong>${d.primary_brand_vs||d.brand_a_vs||''}</strong> &mdash; Cosine: <strong>${(d.cosine_similarity||0).toFixed(4)}</strong> | Drift: <strong>${(d.drift_score||0).toFixed(4)}</strong><div style="font-size:.78em;color:var(--text2);margin-top:2px">${d.interpretation||''}</div></div>`;
     });
   }
 
@@ -741,7 +935,7 @@ function renderSection7(s) {
     h += '<h3>Sentiment Rankings</h3><div class="res-kpi-row">';
     h += `<div class="res-kpi"><div class="val" style="color:var(--green)">${smSum.most_positively_perceived}</div><div class="lbl">Most Positive</div></div>`;
     h += `<div class="res-kpi"><div class="val" style="color:var(--red)">${smSum.most_negatively_perceived}</div><div class="lbl">Most Negative</div></div>`;
-    h += `<div class="res-kpi"><div class="val" style="color:var(--blue)">#${smSum.brand_a_sentiment_rank||'-'}</div><div class="lbl">Brand_A Rank</div></div>`;
+    h += `<div class="res-kpi"><div class="val" style="color:var(--blue)">#${smSum.primary_brand_sentiment_rank||smSum.brand_a_sentiment_rank||'-'}</div><div class="lbl">${pb} Rank</div></div>`;
     h += `<div class="res-kpi"><div class="val" style="color:var(--purple)">${smSum.total_biases_detected||0}</div><div class="lbl">Total Biases</div></div>`;
     h += `<div class="res-kpi"><div class="val" style="color:var(--yellow)">${smSum.total_hallucination_signals||0}</div><div class="lbl">Hallucinations</div></div>`;
     h += '</div>';
@@ -753,7 +947,7 @@ function renderSection7(s) {
     h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Brand</th><th>Positive Rate</th><th>Negative Rate</th><th>Neutral Rate</th><th>Mean Score</th><th>Std Dev</th><th>Mentions</th><th></th></tr></thead><tbody>';
     Object.entries(bsm).forEach(([br,st])=>{
       const posW=(st.positive_rate||0)*100;
-      h += `<tr${br.includes('A')?' class="brand-row"':''}><td><strong>${br}</strong></td><td style="color:var(--green)">${pct(st.positive_rate)}</td><td style="color:var(--red)">${pct(st.negative_rate)}</td><td>${pct(st.neutral_rate)}</td><td>${(st.mean_sentiment_score||0).toFixed(3)}</td><td>${(st.std_sentiment_score||0).toFixed(3)}</td><td>${fmt(st.total_mentions)}</td><td><div class="res-bar" style="width:100px"><div class="fill" style="width:${posW}%;background:${posW>50?'var(--green)':posW>30?'var(--yellow)':'var(--red)'}"></div></div></td></tr>`;
+      h += `<tr\$\{br === pb?' class="brand-row"':''}><td><strong>${br}</strong></td><td style="color:var(--green)">${pct(st.positive_rate)}</td><td style="color:var(--red)">${pct(st.negative_rate)}</td><td>${pct(st.neutral_rate)}</td><td>${(st.mean_sentiment_score||0).toFixed(3)}</td><td>${(st.std_sentiment_score||0).toFixed(3)}</td><td>${fmt(st.total_mentions)}</td><td><div class="res-bar" style="width:100px"><div class="fill" style="width:${posW}%;background:${posW>50?'var(--green)':posW>30?'var(--yellow)':'var(--red)'}"></div></div></td></tr>`;
     });
     h += '</tbody></table></div>';
   }
@@ -813,7 +1007,10 @@ function renderSection8(s) {
   const biases=sent.detected_biases||[];
   const hs=sent.hallucination_signals||[];
   const smSum=sent.sentiment_summary||{};
-  if(!biases.length&&!hs.length) return '';
+  if(!biases.length&&!hs.length){
+    return sectionHeader(8, 'Detected Biases & Hallucination Patterns', 'No bias patterns or hallucination signals were flagged in this dataset.', '') +
+      '<div class="res-section-body">' + insight('No biases or hallucinations detected in the analyzed responses. This module activates automatically when the sentiment engine flags systematic patterns (e.g. your brand consistently losing attribution to competitors, or hallucinated attribute claims).', 'success') + '</div></div>';
+  }
 
   let h = sectionHeader(8, 'Detected Biases & Hallucination Patterns', `${biases.length} bias patterns and ${hs.length} hallucination signals detected across all models.`, '');
 
@@ -864,7 +1061,10 @@ function renderSection8(s) {
 // ══════════════════════════════════════════════════════════════
 function renderSection9(s) {
   const recs=s.recommendations||[];
-  if(!recs.length) return '';
+  if(!recs.length){
+    return sectionHeader(9, 'Strategic Recommendations', 'No prioritized action items were generated for this dataset.', '') +
+      '<div class="res-section-body">' + insight('The recommendation engine generates HIGH/MEDIUM/LOW actions from the real module findings (SoMV gaps, biases, citation deficits, crawler blocks, CPR decay). Re-run with more records or richer citation data to surface actionable items.', 'warn') + '</div></div>';
+  }
 
   let h = sectionHeader(9, 'Strategic Recommendations', `${recs.length} prioritized action items computed from real-time analysis of your data.`, '');
 
@@ -930,6 +1130,184 @@ function renderSection9(s) {
 // ══════════════════════════════════════════════════════════════
 
 // ══════════════════════════════════════════════════════════════
+// SECTION 10: ENTERPRISE INTELLIGENCE (Advanced Graph + Parity + CPR)
+// ══════════════════════════════════════════════════════════════
+function renderEnterprise(s) {
+  const ei = s.enterprise_insights || {};
+  const hasAny = Object.keys(ei).length > 0;
+  if (!hasAny) {
+    return sectionHeader(10, 'Enterprise Intelligence & Advanced Graph Analytics', 'Enterprise-grade metrics require the advanced analytics stage to have run.', '🧠') +
+      '<div class="res-section-body">' + insight('This module computes parity calibration, multi-turn CPR, Graph Authority Score, inverse citation mapping, source ROI and remediation scripts from the analyzed records. No enterprise insight data was produced — re-run the pipeline after the ingestion fixes.', 'warn') + '</div></div>';
+  }
+
+  let h = sectionHeader(10, 'Enterprise Intelligence & Advanced Graph Analytics',
+    'Real computations: API vs web-UI parity calibration, multi-turn Citation Persistence Rate, Graph Authority Score, inverse citation mapping, source-level ROI, and auto-generated remediation scripts.', '🧠');
+
+  // ── 1. Parity Calibration ──
+  const parity = ei.parity_calibration || {};
+  h += '<h3>1. API vs Web-UI Parity Calibration</h3>';
+  if (parity.status === 'calibrated') {
+    h += '<div class="res-kpi-row">';
+    h += `<div class="res-kpi"><div class="val" style="color:${parity.mean_citation_variance > 0.15 ? 'var(--red)' : 'var(--green)'}">${(parity.mean_citation_variance * 100).toFixed(1)}%</div><div class="lbl">Mean Citation Variance</div></div>`;
+    h += `<div class="res-kpi"><div class="val">${parity.paired_prompts || 0}</div><div class="lbl">Paired Control Prompts</div></div>`;
+    h += `<div class="res-kpi"><div class="val">${(parity.max_citation_variance * 100).toFixed(1)}%</div><div class="lbl">Max Variance</div></div>`;
+    h += '</div>';
+    if (parity.variance_flags && parity.variance_flags.length) {
+      h += miniTable(
+        ['Model', 'Turn', 'Variance', 'Finding'],
+        parity.variance_flags.slice(0, 8).map(f => ({
+          cells: [f.model, 'Turn ' + f.turn_index, (f.variance * 100).toFixed(1) + '%', f.finding]
+        }))
+      );
+    }
+  } else {
+    h += insight((parity.message || 'No channel data to calibrate.') + ' <strong>Recommended:</strong> enable the 20% stealth-Playwright web-UI control group.', 'warn');
+  }
+  if (parity.calibration_advice && parity.calibration_advice.length) {
+    h += deepAnalysis('Calibration advice: ' + parity.calibration_advice.join(' '));
+  }
+
+  // ── 2. Multi-Turn CPR ──
+  const cpr = ei.multi_turn_cpr || {};
+  h += '<h3>2. Multi-Turn Citation Persistence Rate (CPR)</h3>';
+  if (cpr.overall_cpr != null) {
+    h += '<div class="res-kpi-row">';
+    const cprColor = cpr.overall_cpr >= 0.6 ? 'var(--green)' : cpr.overall_cpr >= 0.4 ? 'var(--yellow)' : 'var(--red)';
+    h += `<div class="res-kpi"><div class="val" style="color:${cprColor}">${(cpr.overall_cpr * 100).toFixed(0)}%</div><div class="lbl">Overall CPR</div></div>`;
+    h += `<div class="res-kpi"><div class="val">${Object.keys(cpr.cpr_by_model || {}).length}</div><div class="lbl">Models Tracked</div></div>`;
+    h += `<div class="res-kpi"><div class="val">${(cpr.token_window_signals || []).length}</div><div class="lbl">Truncation Signals</div></div>`;
+    h += '</div>';
+    if (Object.keys(cpr.cpr_by_model || {}).length) {
+      h += miniTable(
+        ['Model', 'CPR', 'Status'],
+        Object.entries(cpr.cpr_by_model).map(([m, v]) => ({
+          cells: [m, (v * 100).toFixed(0) + '%', v >= 0.6 ? 'Healthy' : v >= 0.4 ? 'At Risk' : 'Critical']
+        }))
+      );
+    }
+  } else {
+    h += insight((cpr.message || 'No multi-turn data available for CPR analysis.'), 'warn');
+  }
+  if (cpr.token_window_signals && cpr.token_window_signals.length) {
+    cpr.token_window_signals.slice(0, 5).forEach(sig => {
+      h += insight(sig.finding + ` (~${(sig.estimated_context_tokens / 1000).toFixed(0)}k chars context)`, 'danger');
+    });
+  }
+
+  // ── 3. Graph Authority Score ──
+  const ga = ei.graph_authority || {};
+  h += '<h3>3. Graph Authority Score</h3>';
+  if (ga.scores && ga.scores.length) {
+    h += `<div class="res-deep" style="font-family:monospace;font-size:.74em">G_auth = α·C<sub>D</sub>(v) + β·C<sub>B</sub>(v) + γ·S<sub>cos</sub>(E_brand, E_intent) &nbsp;|&nbsp; α=${ga.coefficients.alpha_in_degree}, β=${ga.coefficients.beta_betweenness}, γ=${ga.coefficients.gamma_similarity}</div>`;
+    const brandRows = ga.scores.filter(r => r.type === 'brand').slice(0, 10);
+    if (brandRows.length) {
+      h += miniTable(
+        ['Rank', 'Brand', 'In-Degree', 'Betweenness', 'Cosine Sim', 'Authority Score'],
+        brandRows.map((r, i) => ({
+          cells: ['#' + (i + 1), r.name, r.in_degree_centrality, r.betweenness_centrality, r.cosine_similarity, r.graph_authority_score],
+          cls: r.name === getPrimaryBrand(s) ? 'brand-row' : ''
+        }))
+      );
+    }
+    h += miniTable(
+      ['Type', 'Node', 'Authority Score'],
+      ga.scores.slice(0, 12).map(r => ({
+        cells: [r.type, r.name, r.graph_authority_score],
+        cls: r.type === 'brand' ? 'brand-row' : ''
+      }))
+    );
+  } else {
+    h += insight(ga.message || 'No graph data for authority scoring.', 'warn');
+  }
+
+  // ── 4. Inverse Citation Mapping ──
+  const ic = ei.inverse_citation || {};
+  h += '<h3>4. Inverse Citation Mapping & Crawler Blockage</h3>';
+  const unctd = ic.uncited_authority || [];
+  if (unctd.length) {
+    h += miniTable(
+      ['Domain', 'Competitor', 'Weight', 'Authority Weight'],
+      unctd.slice(0, 10).map(n => ({
+        cells: [n.domain, n.competitor || '-', n.weight, n.authority_weight || '-']
+      }))
+    );
+  } else {
+    h += insight('No uncited authority nodes detected in this dataset.', 'success');
+  }
+  if (ic.crawler_blockage && ic.crawler_blockage.length) {
+    h += '<h4>LLM Crawler robots.txt Audit</h4>';
+    ic.crawler_blockage.forEach(cb => {
+      if (cb.crawler === 'check_failed') h += insight(cb.detail, 'warn');
+      else if (cb.disallowed) h += insight(`⚠ ${cb.crawler} appears blocked in robots.txt — <strong>Citation Omission due to Crawler Blockage.</strong> ${cb.detail}`, 'danger');
+      else h += insight(`✓ ${cb.crawler}: ${cb.detail}`, 'success');
+    });
+  }
+
+  // ── 5. Source-Level ROI ──
+  const roi = ei.source_roi || {};
+  h += '<h3>5. Source-Level ROI Prioritization</h3>';
+  if (roi.ranked_sources && roi.ranked_sources.length) {
+    const top = roi.ranked_sources.slice(0, 12);
+    const maxW = Math.max(...top.map(r => r.citation_influence_weight), 1);
+    h += '<div class="res-table-wrap"><table class="res-table"><thead><tr><th>Domain</th><th>Citations</th><th>Models</th><th>Authority</th><th>Your Share</th><th>Influence Weight</th></tr></thead><tbody>';
+    top.forEach(r => {
+      h += `<tr><td style="font-weight:600">${r.domain}</td><td>${r.citation_count}</td><td>${r.model_diversity}</td><td>${r.authority_weight}</td><td>${(r.your_brand_share * 100).toFixed(0)}%</td><td><div class="res-bar" style="width:120px;display:inline-block;vertical-align:middle"><div class="fill" style="width:${(r.citation_influence_weight / maxW * 100).toFixed(0)}%;background:linear-gradient(90deg,#1a73e8,#7c3aed)"></div></div><span style="margin-left:6px;font-weight:700">${r.citation_influence_weight}</span></td></tr>`;
+    });
+    h += '</tbody></table></div>';
+    (roi.concentration_alerts || []).forEach(a => {
+      h += insight(`<strong>${(a.share * 100).toFixed(0)}% of citations from ${a.domains.length} sources.</strong> ${a.finding}`, 'warn');
+    });
+  }
+
+  // ── 6. Remediation Scripts ──
+  const sgr = ei.semantic_gap_remediation || {};
+  h += '<h3>6. Semantic Gap Remediation Scripts</h3>';
+  const scripts = sgr.remediation_scripts || [];
+  if (scripts.length) {
+    h += `<p style="font-size:.8em;color:var(--text2);margin-bottom:10px">${scripts.length} ready-to-publish assets auto-generated from your real data gaps.</p>`;
+    scripts.slice(0, 5).forEach((sc, i) => {
+      const typeCls = sc.type === 'negative_claim_faq' ? 'danger' : sc.type === 'authority_outreach' ? 'blue' : 'med';
+      h += `<div class="res-insight ${typeCls}" style="margin-bottom:10px">
+        <div style="font-weight:700;margin-bottom:4px">${i + 1}. ${sc.title}</div>
+        <div style="font-size:.8em;color:var(--text2);margin-bottom:6px"><strong>Target:</strong> ${sc.target_page}</div>
+        <div style="font-size:.78em;background:rgba(0,0,0,.04);border-radius:8px;padding:8px 10px;margin-bottom:6px;white-space:pre-wrap;font-family:monospace;max-height:110px;overflow:hidden">${sc.jsonld.replace(/</g, '&lt;')}</div>
+        <div style="font-size:.78em;color:var(--text2);white-space:pre-wrap">${sc.markdown}</div>
+      </div>`;
+    });
+  } else {
+    h += insight('No remediation scripts generated (no negative triples or missing sources in this dataset).', 'success');
+  }
+
+  // ── 7. SoMV Trendlines ──
+  const trend = ei.somv_trendlines || {};
+  h += '<h3>7. SoMV Trendlines by Model Family & Funnel Stage</h3>';
+  if (Object.keys(trend.by_model_family || {}).length) {
+    h += '<h4>By Model Family (primary recommendation share)</h4>';
+    const famRows = [];
+    Object.entries(trend.by_model_family).forEach(([fam, shares]) => {
+      const pb = getPrimaryBrand(s);
+      const mine = shares[pb] || 0;
+      const leaders = Object.entries(shares).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([b, v]) => `${b} ${(v * 100).toFixed(0)}%`).join(', ');
+      famRows.push({ cells: [fam, (mine * 100).toFixed(1) + '%', leaders], cls: 'brand-row' });
+    });
+    h += miniTable(['Model Family', 'Your Primary Share', 'Top Brands'], famRows);
+  }
+  if (Object.keys(trend.by_funnel_stage || {}).length) {
+    h += '<h4>By Funnel Stage</h4>';
+    const stageRows = Object.entries(trend.by_funnel_stage).map(([stage, shares]) => {
+      const pb = getPrimaryBrand(s);
+      const mine = shares[pb] || 0;
+      return { cells: [stage, (mine * 100).toFixed(1) + '%'], cls: 'brand-row' };
+    });
+    h += miniTable(['Funnel Stage', 'Your Primary Share'], stageRows);
+  }
+  (trend.findings || []).forEach(f => h += insight(f, 'warn'));
+
+  h += '</div>';
+  return h;
+}
+
+// ══════════════════════════════════════════════════════════════
 // SECTION 11: STRATEGIC SUMMARY
 // ══════════════════════════════════════════════════════════════
 function renderStrategicSummary(s) {
@@ -943,9 +1321,10 @@ function renderStrategicSummary(s) {
   const recs=s.recommendations||[];
   const biases=sent.detected_biases||[];
   const hs=sent.hallucination_signals||{};
-  const negTriples=(ts.negative_triples_brand_a||[]);
+  const negTriplesKey = Object.keys(ts).find(k => k.startsWith('negative_triples_')) || '';
+  const negTriples=ts[negTriplesKey]||[];
   const missing=(gs.missing_authority_nodes||[]);
-  const brandA=bs['Brand_A']||{};
+  const brandA=bs[pb]||{};
 
   let h = sectionHeader('strategic', 'Strategic Summary & Action Plan', 'Consolidated health score and prioritized 4-phase action plan derived from all analysis modules.', '');
 
@@ -954,9 +1333,9 @@ function renderStrategicSummary(s) {
   if(brandA.share_of_voice) healthScore += brandA.share_of_voice * 30;
   if(brandA.primary_recommendation_rate) healthScore += brandA.primary_recommendation_rate * 25;
   if(brandA.omission_rate != null) healthScore += (1 - brandA.omission_rate) * 20;
-  const posRate = (sent.brand_sentiment_matrix||{})['Brand_A'];
+  const posRate = (sent.brand_sentiment_matrix||{})[pb] || (sent.brand_sentiment_matrix||{})[Object.keys(sent.brand_sentiment_matrix||{})[0]];
   if(posRate) healthScore += (posRate.positive_rate||0) * 15;
-  if(biases.filter(b=>b.brand==='Brand_A'&&b.severity==='HIGH').length === 0) healthScore += 10;
+  if(biases.filter(b=>b.brand===pb&&b.severity==='HIGH').length === 0) healthScore += 10;
   healthScore = Math.min(100, Math.round(healthScore));
   const healthColor = healthScore > 70 ? 'var(--green)' : healthScore > 40 ? 'var(--yellow)' : 'var(--red)';
   const healthLabel = healthScore > 70 ? 'Strong Position' : healthScore > 40 ? 'Needs Improvement' : 'Critical Attention Required';
@@ -976,7 +1355,7 @@ function renderStrategicSummary(s) {
   if(hs.length) h += `<li style="font-size:.82em;color:var(--text2);margin:6px 0"><strong>Hallucination fix:</strong> Create documentation countering ${hs.length} hallucination signals. Priority: models with fastest content turnover.</li>`;
   if(biases.filter(b=>b.severity==='HIGH').length) h += `<li style="font-size:.82em;color:var(--text2);margin:6px 0"><strong>Critical bias response:</strong> Counter ${biases.filter(b=>b.severity==='HIGH').length} HIGH-severity biases with targeted content creation.</li>`;
   if(negTriples.length) h += `<li style="font-size:.82em;color:var(--text2);margin:6px 0"><strong>Negative triple content:</strong> Create FAQ pages for ${negTriples.length} negative claims found in LLM responses.</li>`;
-  if(missing.length) h += `<li style="font-size:.82em;color:var(--text2);margin:6px 0"><strong>Missing authority nodes:</strong> Establish presence on ${missing.length} sources where competitors are cited but Brand_A is absent.</li>`;
+  if(missing.length) h += `<li style="font-size:.82em;color:var(--text2);margin:6px 0"><strong>Missing authority nodes:</strong> Establish presence on ${missing.length} sources where competitors are cited but ${pb} is absent.</li>`;
   h += '</ol></div>';
 
   // Phase 2: Foundation

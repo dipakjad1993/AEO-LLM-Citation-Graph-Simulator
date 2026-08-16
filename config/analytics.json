@@ -50,6 +50,15 @@
       "min_cluster_size": 5,
       "min_samples": 3,
       "contamination": 0.1
+    },
+    "verification": {
+      "enabled": true,
+      "use_embeddings": true,
+      "embedding": {
+        "model": "all-mpnet-base-v2"
+      },
+      "verified_threshold": 0.72,
+      "partial_threshold": 0.42
     }
   },
   "output": {

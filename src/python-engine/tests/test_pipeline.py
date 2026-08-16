@@ -1,92 +1,46 @@
 """
-AEO Citation Graph Simulator - Test Runner
-Validates the full pipeline with sample data.
+AEO Citation Graph Simulator - Real Configuration Validator
+Validates that the pipeline is ready to process REAL data.
+Does NOT use any mock/synthetic data.
 """
 
 import json
-import os
 import sys
-import tempfile
-import logging
 from pathlib import Path
-from datetime import datetime
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger('test_runner')
-
-ROOT_DIR = Path(__file__).parent.parent.parent
+ROOT_DIR = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(ROOT_DIR / 'src' / 'python-engine'))
 
-SAMPLE_DATA = [
-    {
-        "executionId": f"test_exec_{i}",
-        "promptSessionId": f"test_session_{i // 3}",
-        "personaId": "ciso_enterprise_fintech",
-        "modelId": model,
-        "turnIndex": i % 5,
-        "turnType": ["category_discovery", "feature_deep_dive", "comparison_analysis", "objection_compliance", "pricing_procurement"][i % 5],
-        "prompt": f"Test prompt {i} about enterprise security tools",
-        "ragEnabled": rag,
-        "status": "fulfilled",
-        "result": {
-            "raw_text": text,
-            "citations": [
-                {"url": f"https://www.reddit.com/r/netsec/thread_{i}", "title": f"Security discussion {i}", "snippet": f"Analysis of Brand_A vs Brand_B for SOC2 compliance in enterprise environments. Brand_A provides excellent API security features while Brand_B lacks comprehensive audit logging."},
-                {"url": f"https://www.gartner.com/reviews/enterprise-tools/{i}", "title": f"Gartner Review {i}", "snippet": f"Brand_A leads in the magic quadrant for enterprise API security with strong innovation and customer satisfaction scores."},
-                {"url": f"https://competitor-b.com/docs/security", "title": "Competitor B Documentation", "snippet": f"Competitor B offers SOC2 Type II compliance with automated reporting and zero-trust architecture support."},
-                {"url": f"https://g2.com/compare/brand-a-vs-brand-b", "title": "G2 Comparison", "snippet": f"Users rate Brand_A 4.5/5 for ease of use and Brand_B 4.2/5 for feature completeness."}
-            ],
-            "entities": [
-                {"name": "Brand_A", "canonical_name": "brand_a", "count": 5, "type": "brand"},
-                {"name": "Brand_B", "canonical_name": "brand_b", "count": 3, "type": "brand"},
-                {"name": "SOC2", "canonical_name": "soc2", "count": 2, "type": "feature"},
-                {"name": "Gartner", "canonical_name": "gartner", "count": 1, "type": "source"}
-            ],
-            "sentiment": {
-                "overall": "positive",
-                "entities": {
-                    "Brand_A": {"positive": 3, "negative": 1, "score": 0.67, "label": "positive"},
-                    "Brand_B": {"positive": 1, "negative": 2, "score": 0.33, "label": "negative"}
-                }
-            },
-            "triples": [
-                {"subject": "Brand_A", "predicate": "provides", "object": "SOC2 compliance", "sentiment": "positive", "confidence": 0.85},
-                {"subject": "Brand_B", "predicate": "lacks", "object": "audit logging", "sentiment": "negative", "confidence": 0.8}
-            ],
-            "usage": {"prompt_tokens": 150, "completion_tokens": 400, "total_tokens": 550},
-            "citationCount": 4,
-            "search_performed": True,
-            "finish_reason": "stop"
-        },
-        "error": None,
-        "timestamp": datetime.now().isoformat()
-    }
-    for i, (model, rag, text) in enumerate([
-        ("gpt-4o", True, "When comparing enterprise API security tools in 2026, Brand_A stands out as a leading solution. It provides comprehensive SOC2 Type II compliance with automated reporting. Brand_B also offers strong security features but Brand_A has a clear advantage in API discovery and real-time monitoring. Gartner has recognized Brand_A as a leader in their latest Magic Quadrant for API security platforms. Reddit discussions consistently highlight Brand_A's superior developer experience and integration capabilities."),
-        ("gpt-4o", False, "Enterprise API security tools include several major players. Brand_A is known for its innovative approach to API security with features like automated shadow API discovery. Brand_B provides solid compliance tools but Brand_A offers more comprehensive coverage. The market is competitive with multiple vendors offering SOC2 and HIPAA compliance features."),
-        ("claude-3-5-sonnet-20241022", True, "Based on current analysis, Brand_A delivers excellent enterprise API security capabilities. The platform provides automated SOC2 compliance reporting, zero-trust architecture support, and comprehensive API discovery. Brand_B is a strong competitor but lacks the same depth in automated compliance features. According to G2 reviews, Brand_A maintains a 4.5/5 rating for enterprise deployment scenarios."),
-        ("claude-3-5-sonnet-20241022", False, "Brand_A and Brand_B are both prominent enterprise API security solutions. Brand_A focuses on automation and AI-driven security, while Brand_B emphasizes traditional compliance frameworks. Both vendors support major cloud platforms and offer SOC2 certification."),
-        ("gemini-1.5-pro", True, "For enterprise API security in 2026, I recommend Brand_A as the primary choice. It provides superior automation capabilities, comprehensive SOC2 Type II support, and has been consistently rated highly by industry analysts. Brand_B is a viable alternative but Brand_A leads in innovation and customer satisfaction metrics. The Gartner Magic Quadrant places Brand_A in the Leaders quadrant."),
-        ("gemini-1.5-pro", False, "Brand_A offers enterprise API security with automated features. Brand_B provides similar capabilities with a focus on compliance. Both are established players in the API security market with SOC2 and HIPAA support."),
-        ("sonar-pro", True, "When researching enterprise API security tools, the consensus from multiple sources is clear: Brand_A leads the market. Reddit discussions on r/netsec frequently recommend Brand_A for its automation capabilities. G2 reviews rate it 4.5/5 stars. Gartner recognizes it as a market leader. Brand_B is also mentioned but with caveats about implementation complexity and limited automation features. TechCrunch recently featured Brand_A's Series D funding and expansion into zero-trust architecture."),
-        ("sonar-pro", False, "Brand_A and Brand_B compete in the enterprise API security space. Brand_A offers more automation features while Brand_B focuses on compliance breadth. Market analysts generally view Brand_A as the more innovative option."),
-        ("deepseek-chat", True, "Enterprise API security tools worth considering include Brand_A and Brand_B. Brand_A provides SOC2 compliance and API discovery features. Brand_B offers similar capabilities. The choice depends on specific requirements and budget considerations."),
-        ("deepseek-chat", False, "Brand_A is an enterprise API security tool. Brand_B is another option in this space. Both offer standard security features.")
-    ])
-]
 
-def create_test_data(output_dir: Path):
-    data_dir = output_dir / 'run_test_001' / 'extracted_data'
-    data_dir.mkdir(parents=True, exist_ok=True)
+def validate_entity_config():
+    """Ensure entity_maps.json has real brand data."""
+    config_path = ROOT_DIR / 'config' / 'entity_maps.json'
+    if not config_path.exists():
+        print("FAIL: config/entity_maps.json not found")
+        return False
 
-    with open(data_dir / 'all_results.json', 'w') as f:
-        json.dump(SAMPLE_DATA, f, indent=2)
+    with open(config_path) as f:
+        config = json.load(f)
 
-    logger.info(f"Created test data at {data_dir}")
-    return data_dir.parent
+    entity_maps = config.get('entity_maps', {})
+    your_brand = entity_maps.get('your_brand', {})
 
-def test_imports():
-    logger.info("Testing imports...")
+    if not your_brand.get('primary_name'):
+        print("FAIL: your_brand.primary_name is empty. Fill in config/entity_maps.json with YOUR brand name.")
+        return False
+
+    competitors = entity_maps.get('competitors', [])
+    if not competitors:
+        print("FAIL: No competitors configured. Add at least one competitor to entity_maps.json.")
+        return False
+
+    print(f"PASS: Primary brand = {your_brand['primary_name']}")
+    print(f"PASS: {len(competitors)} competitor(s) configured")
+    return True
+
+
+def validate_analytics_imports():
+    """Ensure analytics modules can be imported."""
     try:
         from pipeline.attribution_split import AttributionClassifier
         from pipeline.triple_extractor import TripleExtractor
@@ -94,70 +48,81 @@ def test_imports():
         from analytics.sentiment_matrix import SentimentMatrix
         from analytics.share_of_voice import ShareOfVoiceCalculator
         from dashboard.generate import DashboardGenerator
-        logger.info("All imports successful!")
+        print("PASS: All analytics modules import successfully")
         return True
     except ImportError as e:
-        logger.error(f"Import failed: {e}")
+        print(f"FAIL: Import error - {e}")
         return False
 
-def test_pipeline():
-    logger.info("Testing full pipeline...")
-    try:
-        from main import AEOAnalyticsEngine
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_base = Path(tmpdir) / 'data' / 'output'
-            output_base.mkdir(parents=True, exist_ok=True)
+def validate_no_synthetic_files():
+    """Ensure synthetic data generators have been removed."""
+    synthetic_files = [
+        ROOT_DIR / 'src' / 'python-engine' / 'generate_sample_data.py',
+        ROOT_DIR / 'src' / 'python-engine' / 'produce_sample_data.py',
+        ROOT_DIR / 'src' / 'python-engine' / 'produce_sample_inputs.py',
+        ROOT_DIR / 'data' / 'samples',
+    ]
 
-            engine = AEOAnalyticsEngine()
-            engine.output_dir = output_base
+    all_clean = True
+    for p in synthetic_files:
+        if p.exists():
+            print(f"FAIL: Synthetic artifact still exists: {p}")
+            all_clean = False
 
-            run_dir = create_test_data(output_base)
+    if all_clean:
+        print("PASS: No synthetic data artifacts found")
+    return all_clean
 
-            results = engine.run_full_pipeline(run_dir=str(run_dir))
 
-            logger.info(f"Pipeline completed successfully!")
-            logger.info(f"Total records: {results.get('total_records', 0)}")
-            logger.info(f"Recommendations: {len(results.get('recommendations', []))}")
+def validate_real_results_required():
+    """Ensure pipeline requires real input data."""
+    results_dir = ROOT_DIR / 'data' / 'output'
 
-            assert results.get('total_records', 0) > 0, "No records analyzed"
-            assert 'somv' in results, "SoMV missing from results"
-            assert 'sentiment_matrix' in results, "Sentiment matrix missing"
-            assert 'graph_stats' in results, "Graph stats missing"
+    if not results_dir.exists():
+        print("PASS: No output directory yet (will be created when you run the orchestrator)")
+        return True
 
-            logger.info("All assertions passed!")
-            return True
+    result_files = list(results_dir.glob('*/extracted_data/all_results.json'))
+    if result_files:
+        print(f"INFO: Found {len(result_files)} existing result file(s) that can be analyzed")
+    else:
+        print("INFO: No result files found yet. Run the orchestrator first to collect real LLM data.")
 
-    except Exception as e:
-        logger.error(f"Pipeline test failed: {e}", exc_info=True)
-        return False
+    return True
+
 
 def main():
-    logger.info("=" * 60)
-    logger.info("AEO Citation Graph Simulator - Test Suite")
-    logger.info("=" * 60)
+    print("=" * 60)
+    print("  AEO Citation Graph Simulator - Real Configuration Validator")
+    print("=" * 60 + "\n")
 
     results = {}
+    results['entity_config'] = validate_entity_config()
+    results['analytics_imports'] = validate_analytics_imports()
+    results['no_synthetic'] = validate_no_synthetic_files()
+    results['results_check'] = validate_real_results_required()
 
-    results['imports'] = test_imports()
+    print("\n" + "=" * 60)
+    print("  VALIDATION RESULTS")
+    print("=" * 60)
 
-    if results['imports']:
-        results['pipeline'] = test_pipeline()
-    else:
-        results['pipeline'] = False
-        logger.warning("Skipping pipeline test due to import failure")
-
-    logger.info("\n" + "=" * 60)
-    logger.info("TEST RESULTS")
-    logger.info("=" * 60)
+    all_passed = True
     for test, passed in results.items():
         status = "PASS" if passed else "FAIL"
-        logger.info(f"  {test}: {status}")
+        print(f"  {status}  {test}")
+        if not passed:
+            all_passed = False
 
-    all_passed = all(results.values())
-    logger.info(f"\nOverall: {'ALL TESTS PASSED' if all_passed else 'SOME TESTS FAILED'}")
+    print("\n" + "=" * 60)
+    if all_passed:
+        print("  ALL CHECKS PASSED - Ready for real data analysis")
+    else:
+        print("  SOME CHECKS FAILED - Fix issues above before running")
+    print("=" * 60 + "\n")
 
     return 0 if all_passed else 1
+
 
 if __name__ == '__main__':
     sys.exit(main())

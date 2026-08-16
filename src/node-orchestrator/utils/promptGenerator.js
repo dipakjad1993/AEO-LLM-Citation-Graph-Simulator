@@ -98,12 +98,26 @@ export class PromptGenerator {
       }
     }
 
-    const brands = this.entityMaps.competitors || [];
-    const primaryBrand = this.entityMaps.your_brand?.primary_name || 'Brand_A';
+    const entityMaps = this.entityMaps?.entity_maps || this.entityMaps;
+    const brands = entityMaps?.competitors || [];
+    const primaryBrand = entityMaps?.your_brand?.primary_name || '';
 
+    sampled.your_brand = primaryBrand;
     sampled.brand_a = primaryBrand;
-    if (brands.length > 0) sampled.brand_b = brands[0].primary_name;
-    if (brands.length > 1) sampled.brand_c = brands[1].primary_name;
+    if (brands.length > 0) {
+      sampled.competitor_1 = brands[0].primary_name;
+      sampled.brand_b = brands[0].primary_name;
+    }
+    if (brands.length > 1) {
+      sampled.competitor_2 = brands[1].primary_name;
+      sampled.brand_c = brands[1].primary_name;
+    }
+    if (brands.length > 2) {
+      sampled.competitor_3 = brands[2].primary_name;
+    }
+
+    sampled.category = entityMaps?.your_brand?.category || '';
+    sampled.vertical = persona.vertical || entityMaps?.your_brand?.category || '';
 
     return sampled;
   }
@@ -112,24 +126,46 @@ export class PromptGenerator {
     let result = template;
 
     for (const [key, value] of Object.entries(parameters)) {
-      const regex = new RegExp(`\\{${key}\\}`, 'g');
-      result = result.replace(regex, value);
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        const regex = new RegExp(`\\{${key}\\}`, 'g');
+        result = result.replace(regex, value);
+      }
     }
 
-    const remainingPlaceholders = result.match(/\{[^}]+\}/g);
-    if (remainingPlaceholders) {
-      for (const placeholder of remainingPlaceholders) {
-        const key = placeholder.slice(1, -1);
-        const defaults = {
-          vertical: persona.vertical || 'enterprise',
-          company_size: '500-1000 employees',
-          use_case: 'enterprise deployment',
-          feature: 'core functionality',
-          metric: 'performance benchmarks',
-          volume: '1M requests/day'
-        };
-        result = result.replace(placeholder, defaults[key] || 'enterprise');
+    const entityMaps = this.entityMaps?.entity_maps || this.entityMaps;
+    const primaryBrand = entityMaps?.your_brand?.primary_name || '';
+    const category = entityMaps?.your_brand?.category || '';
+    const defaults = {
+      your_brand: primaryBrand,
+      brand_a: primaryBrand,
+      vertical: persona.vertical || parameters.category || category || 'enterprise software',
+      category: parameters.category || category || persona.vertical || 'enterprise software',
+      company_size: '500-1000 employees',
+      use_case: parameters.category || 'enterprise deployment',
+      feature: parameters.category || 'core functionality',
+      metric: 'performance benchmarks',
+      volume: '1M requests/day',
+      deployment_type: 'cloud',
+      compliance_requirement: 'SOC2'
+    };
+
+    let remainingPlaceholders = result.match(/\{[^}]+\}/g) || [];
+    for (const placeholder of remainingPlaceholders) {
+      const key = placeholder.slice(1, -1);
+      if (defaults[key]) {
+        result = result.split(placeholder).join(defaults[key]);
       }
+    }
+
+    remainingPlaceholders = result.match(/\{[^}]+\}/g) || [];
+    if (remainingPlaceholders.length > 0) {
+      const unresolved = [...new Set(remainingPlaceholders.map(p => p.slice(1, -1)))];
+      throw new Error(
+        `Cannot build prompt for persona "${persona.persona_id}" (${persona.display_name || persona.persona_id}): ` +
+        `unresolved placeholders {${unresolved.join('}, {')}} in template "${template}". ` +
+        `Add each key to config/personas.json under prompt_parameters (e.g. "${unresolved[0]}": ["some value"]), ` +
+        `or define your brand/competitors in config/entity_maps.json.`
+      );
     }
 
     return result;

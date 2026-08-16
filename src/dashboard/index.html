@@ -1,614 +1,707 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AEO &amp; LLM Citation Graph Simulator</title>
-<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Display:wght@400;500;700&family=Roboto:wght@300;400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Display:wght@400;500;700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <script src="src/dashboard/sections.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--blue:#2563eb;--blue-d:#1d4ed8;--green:#16a34a;--red:#dc2626;--yellow:#ca8a04;--purple:#7c3aed;--bg:#f1f5f9;--card:#fff;--border:#e2e8f0;--text:#1e293b;--text2:#64748b;--text3:#94a3b8}
-body{font-family:'Google Sans','Roboto','Inter',system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;font-size:14px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+:root{--blue:#1a73e8;--blue-d:#1765cc;--green:#188038;--red:#d93025;--yellow:#b06000;--purple:#7c3aed;--bg:#f8f9fa;--card:#fff;--border:#dadce0;--text:#202124;--text2:#5f6368;--text3:#9aa0a6}
+body{font-family:'Google Sans','Roboto',system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;font-size:14px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 
-.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:0 28px;display:flex;align-items:center;height:56px;position:sticky;top:0;z-index:100}
-.topbar .logo{font-weight:700;font-size:1.1em;color:var(--blue);margin-right:auto;white-space:nowrap}
-.topbar .status{font-size:.8em;padding:4px 12px;border-radius:20px;font-weight:500}
-.status.idle{background:#f1f5f9;color:var(--text3)}
-.status.running{background:#dbeafe;color:var(--blue)}
-.status.done{background:#dcfce7;color:var(--green)}
-.status.er{background:#fee2e2;color:var(--red)}
+/* ═══════════════ TOP BAR ═══════════════ */
+.topbar{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;height:60px;position:sticky;top:0;z-index:100;gap:24px}
+.topbar .logo{font-weight:700;font-size:1.05em;color:var(--blue);white-space:nowrap;display:flex;align-items:center;gap:8px}
+.topbar .logo .dot{width:9px;height:9px;border-radius:50%;background:linear-gradient(135deg,#1a73e8,#7c3aed);display:inline-block}
+.nav-tabs{display:flex;gap:4px;background:#f1f3f4;border-radius:24px;padding:4px}
+.nav-tabs .tab{border:0;background:transparent;padding:7px 18px;border-radius:20px;font-size:.82em;font-weight:600;color:var(--text2);cursor:pointer;font-family:inherit;transition:all .15s}
+.nav-tabs .tab.active{background:var(--card);color:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.topbar .status{margin-left:auto;font-size:.78em;padding:5px 14px;border-radius:20px;font-weight:600;white-space:nowrap}
+.status.idle{background:#f1f3f4;color:var(--text3)}
+.status.running{background:#e8f0fe;color:var(--blue)}
+.status.done{background:#e6f4ea;color:var(--green)}
+.status.er{background:#fce8e6;color:var(--red)}
 
-.main{padding:24px;max-width:1200px;margin:0 auto}
+/* ═══════════════ LAYOUT ═══════════════ */
+.main{padding:20px 24px 40px;max-width:1180px;margin:0 auto}
+.page{display:none}
+.page.active{display:block}
 
-.section-label{font-size:.75em;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3);margin:20px 0 8px;padding-left:4px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:12px}
-.card h2{font-size:1em;font-weight:700;margin-bottom:2px}
-.card .sub{font-size:.8em;color:var(--text2);margin-bottom:12px}
+.section-label{font-size:.72em;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--text3);margin:26px 0 10px;padding-left:2px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:14px}
+.card h2{font-size:1em;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:8px}
+.card .sub{font-size:.8em;color:var(--text2);margin-bottom:14px}
 
-.dropzone{border:2px dashed #cbd5e1;border-radius:10px;padding:20px 12px;text-align:center;cursor:pointer;transition:all .15s;background:#f8fafc}
-.dropzone:hover,.dropzone.drag{border-color:var(--blue);background:#eff6ff}
-.dropzone .ico{font-size:1.4em;margin-bottom:2px}
+/* ═══════════════ INPUT HERO ═══════════════ */
+.input-hero{text-align:left;padding:26px 28px;margin-bottom:14px;background:linear-gradient(135deg,#1a73e8 0%,#0d47a1 100%);border-radius:16px;color:#fff;display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.input-hero .title{font-size:1.5em;font-weight:700;letter-spacing:-.02em;line-height:1.2}
+.input-hero .desc{font-size:.84em;color:rgba(255,255,255,.85);margin-top:6px;max-width:640px;line-height:1.6}
+.input-hero .badge{font-size:.7em;font-weight:600;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.25);padding:4px 12px;border-radius:20px;white-space:nowrap}
+
+/* ═══════════════ FORM FIELDS ═══════════════ */
+label{display:block;font-size:.72em;font-weight:700;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.03em}
+input[type="text"],input[type="number"],input[type="date"],input[type="url"],input[type="password"],textarea,select{width:100%;padding:9px 11px;background:#f8f9fa;border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:.86em;font-family:inherit;transition:border .15s, box-shadow .15s}
+input:focus,textarea:focus,select:focus{outline:0;border-color:var(--blue);box-shadow:0 0 0 3px rgba(26,115,232,.12);background:#fff}
+textarea{min-height:64px;resize:vertical}
+.fg{margin-bottom:12px}
+.row{display:flex;gap:12px}.row>*{flex:1}
+.cols2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cols3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:760px){.cols2,.cols3{grid-template-columns:1fr}}
+
+/* ═══════════════ FIELD HELP NOTES ═══════════════ */
+.hint-note{font-size:.72em;color:var(--text2);margin-top:4px;line-height:1.55;background:#f8f9fa;border:1px dashed #dadce0;border-radius:8px;padding:7px 10px}
+.hint-note b{color:var(--blue);font-weight:600}
+.hint-note .tool{color:#a15c00;font-weight:600}
+.hint-toggle{font-size:.68em;color:var(--blue);font-weight:600;cursor:pointer;margin-top:3px;display:inline-block;background:none;border:0;font-family:inherit;padding:0}
+.hint-toggle:hover{text-decoration:underline}
+
+/* ═══════════════ TOGGLES ═══════════════ */
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #f1f3f4}
+.toggle-row:last-child{border-bottom:0}
+.toggle-row .tlabel{font-size:.86em;font-weight:500}
+.toggle-row .tdesc{font-size:.76em;color:var(--text2);margin-top:2px}
+.switch{position:relative;width:42px;height:24px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.switch .slider{position:absolute;inset:0;background:#dadce0;border-radius:24px;transition:.2s;cursor:pointer}
+.switch .slider::before{content:'';position:absolute;height:18px;width:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.switch input:checked + .slider{background:var(--blue)}
+.switch input:checked + .slider::before{transform:translateX(18px)}
+.field-disabled{opacity:.55;pointer-events:none}
+
+/* ═══════════════ CHIPS ═══════════════ */
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.chip{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);background:#f8f9fa;font-size:.8em;font-weight:600;color:var(--text2);cursor:pointer;transition:all .15s;font-family:inherit}
+.chip:hover{border-color:var(--blue);color:var(--blue)}
+.chip.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.chip.zone{background:#e8f0fe;border-color:#aecbfa;color:var(--blue)}
+
+/* ═══════════════ BUTTONS ═══════════════ */
+.btn{padding:9px 20px;border:0;border-radius:8px;font-size:.85em;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s;display:inline-flex;align-items:center;gap:6px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-blue{background:var(--blue);color:#fff}.btn-blue:hover:not(:disabled){background:var(--blue-d)}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover:not(:disabled){background:#137333}
+.btn-outline{background:var(--card);color:var(--text2);border:1.5px solid var(--border)}.btn-outline:hover{border-color:#9aa0a6}
+.btn-sm{padding:5px 12px;font-size:.75em}
+.btn-big{padding:14px 36px;font-size:.95em;border-radius:10px}
+.bgrp{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+/* ═══════════════ UPLOADS ═══════════════ */
+.dropzone{border:2px dashed #cbd5e1;border-radius:10px;padding:18px 14px;text-align:center;cursor:pointer;transition:all .15s;background:#fafbfc}
+.dropzone:hover,.dropzone.drag{border-color:var(--blue);background:#e8f0fe}
 .dropzone .ttl{font-weight:600;font-size:.85em}
 .dropzone .hint{font-size:.72em;color:var(--text3)}
 .dropzone input{display:none}
-
-.files{margin-top:6px}
-.fitem{display:flex;align-items:center;gap:6px;padding:5px 8px;background:#f8fafc;border:1px solid var(--border);border-radius:6px;margin-bottom:3px;font-size:.8em}
+.files{margin-top:8px}
+.fitem{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f8f9fa;border:1px solid var(--border);border-radius:7px;margin-bottom:4px;font-size:.8em}
 .fitem .nm{flex:1;font-weight:500}
 .fitem .sz{color:var(--text3);font-size:.72em}
-.fitem .del{cursor:pointer;color:var(--red);font-weight:700;padding:0 4px}
+.fitem .del{cursor:pointer;color:var(--red);font-weight:700;padding:0 5px}
 
-label{display:block;font-size:.75em;font-weight:600;color:var(--text2);margin-bottom:2px;text-transform:uppercase;letter-spacing:.02em}
-input[type="text"],input[type="number"],textarea,select{width:100%;padding:8px 10px;background:#f8fafc;border:1.5px solid var(--border);border-radius:7px;color:var(--text);font-size:.85em;font-family:inherit}
-input:focus,textarea:focus,select:focus{outline:0;border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.08)}
-textarea{min-height:70px;resize:vertical}
-.fg{margin-bottom:10px}
-.row{display:flex;gap:8px}.row>*{flex:1}
+/* ═══════════════ MISC INPUT ═══════════════ */
+.pill{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.68em;font-weight:700}
+.p-blue{background:#e8f0fe;color:var(--blue)}.p-green{background:#e6f4ea;color:var(--green)}.p-yellow{background:#fef7e0;color:var(--yellow)}.p-red{background:#fce8e6;color:var(--red)}.p-purple{background:#f3e8fd;color:var(--purple)}
+.comp-row{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.comp-row input{flex:1}
+.comp-remove{width:34px;height:34px;border-radius:8px;border:1.5px solid var(--border);background:#f8f9fa;color:var(--red);font-size:1.1em;cursor:pointer;flex-shrink:0}
+.pill2{background:#e6f4ea;color:var(--green);border:1px solid #34a853}
+.pill2.dim{background:#f1f3f4;color:var(--text3);border-color:var(--border)}
 
-.btn{padding:8px 18px;border:0;border-radius:7px;font-size:.85em;font-weight:600;cursor:pointer;font-family:inherit;transition:all .12s;display:inline-flex;align-items:center;gap:5px}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.btn-blue{background:var(--blue);color:#fff}.btn-blue:hover:not(:disabled){background:var(--blue-d)}
-.btn-green{background:var(--green);color:#fff}.btn-green:hover:not(:disabled){background:#15803d}
-.btn-outline{background:var(--card);color:var(--text2);border:1.5px solid var(--border)}.btn-outline:hover{border-color:#94a3b8}
-.btn-sm{padding:4px 10px;font-size:.75em}
-.btn-big{padding:12px 32px;font-size:.95em;border-radius:10px}
-.btn-purple{background:var(--purple);color:#fff}.btn-purple:hover:not(:disabled){background:#6d28d9}
-.bgrp{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-
-.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7em;font-weight:600}
-.p-blue{background:#dbeafe;color:var(--blue)}.p-green{background:#dcfce7;color:var(--green)}.p-yellow{background:#fef9c3;color:var(--yellow)}.p-red{background:#fee2e2;color:var(--red)}.p-purple{background:#ede9fe;color:var(--purple)}
-
-.progress{height:4px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin:8px 0}
-.progress .bar{height:100%;background:linear-gradient(90deg,var(--blue),var(--purple));animation:pulse 1.5s infinite}
+.progress{height:5px;background:#e8eaed;border-radius:4px;overflow:hidden;margin:10px 0}
+.progress .bar{height:100%;background:linear-gradient(90deg,var(--blue),var(--purple));animation:pulse 1.5s infinite;border-radius:4px;transition:width .8s cubic-bezier(.4,0,.2,1);width:2%}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 
-.log{background:#0f172a;border-radius:8px;padding:12px;max-height:260px;overflow-y:auto;font-family:'Cascadia Code','Consolas',monospace;font-size:.75em;line-height:1.6;color:#7dd3fc;white-space:pre-wrap;word-break:break-all;margin-top:6px}
-.log .er{color:#fca5a5}.log .ok{color:#86efac}
+.log{background:#1e1e1e;border-radius:10px;padding:12px;max-height:240px;overflow-y:auto;font-family:'Consolas','Roboto Mono',monospace;font-size:.74em;line-height:1.6;color:#81d4fa;white-space:pre-wrap;word-break:break-all;margin-top:8px}
+.log .er{color:#ff8a80}.log .ok{color:#a5d6a7}
 
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-@media(max-width:800px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
-
-table{width:100%;border-collapse:collapse}
-th,td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)}
-th{background:#f8fafc;color:var(--text2);font-size:.75em;font-weight:600;text-transform:uppercase}
-
-.stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center}
-.stat .val{font-size:1.6em;font-weight:700;color:var(--blue)}
-.stat .lbl{color:var(--text2);font-size:.78em}
-
-.rec{border-left:4px solid var(--blue);padding:10px 14px;margin-bottom:6px;background:#f8fafc;border-radius:0 8px 8px 0;font-size:.85em}
-.rec.hi{border-left-color:var(--red)}.rec.md{border-left-color:var(--yellow)}.rec.lo{border-left-color:var(--green)}
-
-.bias{background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px;margin-bottom:6px;font-size:.82em}
-
-.toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:8px;font-size:.82em;font-weight:500;z-index:999;transform:translateY(60px);opacity:0;transition:all .25s;box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.hidden{display:none}
+.toast{position:fixed;bottom:22px;right:22px;padding:12px 20px;border-radius:10px;font-size:.82em;font-weight:600;z-index:999;transform:translateY(70px);opacity:0;transition:all .25s;box-shadow:0 6px 18px rgba(0,0,0,.18)}
 .toast.show{transform:translateY(0);opacity:1}
 .toast.ok{background:var(--green);color:#fff}.toast.er{background:var(--red);color:#fff}.toast.in{background:var(--blue);color:#fff}
 
-.hidden{display:none}
-
-/* ═══════════════ LANDING HERO ═══════════════ */
-.landing-hero{text-align:center;padding:52px 28px 44px;margin-bottom:28px;background:linear-gradient(135deg,#0f172a 0%,#1e1b4b 35%,#0f172a 65%,#0c1222 100%);border-radius:20px;color:#fff;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.06);box-shadow:0 4px 32px rgba(0,0,0,.15)}
-.landing-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 20% 50%,rgba(37,99,235,.22) 0%,transparent 55%),radial-gradient(ellipse at 80% 50%,rgba(124,58,237,.18) 0%,transparent 55%),radial-gradient(ellipse at 50% 100%,rgba(16,185,129,.08) 0%,transparent 40%);pointer-events:none}
-.landing-hero-inner{position:relative;z-index:1}
-.landing-badge{display:inline-block;padding:4px 16px;border-radius:20px;font-size:.7em;font-weight:600;background:rgba(37,99,235,.2);border:1px solid rgba(37,99,235,.3);color:#93c5fd;margin-bottom:16px;letter-spacing:.03em}
-.landing-title{font-size:2.2em;font-weight:800;letter-spacing:-.04em;margin:0 0 12px;line-height:1.15;background:linear-gradient(135deg,#f8fafc 0%,#94a3b8 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.landing-sub{font-size:.95em;color:#94a3b8;max-width:700px;margin:0 auto;line-height:1.7}
-
-/* ═══════════════ INFO CARDS ═══════════════ */
-.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:24px}
-.info-card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:22px 20px;transition:all .25s cubic-bezier(.4,0,.2,1);position:relative;overflow:hidden}
-.info-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0}
-.info-card:hover{transform:translateY(-3px);box-shadow:0 8px 28px rgba(0,0,0,.08);border-color:#cbd5e1}
-.info-icon{font-size:1.6em;margin-bottom:10px;line-height:1}
-.info-card h3{font-size:.92em;font-weight:700;margin:0 0 8px;color:#1e293b}
-.info-card p,.info-card ul{font-size:.8em;color:#475569;line-height:1.7;margin:0}
-.info-card ul{padding-left:18px}
-.info-card li{margin:4px 0;list-style:disc}
-.info-card li strong{color:#1e293b}
-
-.info-blue::before{background:linear-gradient(90deg,#2563eb,#60a5fa)}.info-blue{border-top:3px solid #2563eb}
-.info-blue .info-icon{color:#2563eb}
-
-.info-purple::before{background:linear-gradient(90deg,#7c3aed,#a78bfa)}.info-purple{border-top:3px solid #7c3aed}
-.info-purple .info-icon{color:#7c3aed}
-
-.info-green::before{background:linear-gradient(90deg,#16a34a,#4ade80)}.info-green{border-top:3px solid #16a34a}
-.info-green .info-icon{color:#16a34a}
-
-.info-yellow::before{background:linear-gradient(90deg,#ca8a04,#facc15)}.info-yellow{border-top:3px solid #ca8a04}
-.info-yellow .info-icon{color:#ca8a04}
-
-.info-red::before{background:linear-gradient(90deg,#dc2626,#f87171)}.info-red{border-top:3px solid #dc2626}
-.info-red .info-icon{color:#dc2626}
-
-.info-teal::before{background:linear-gradient(90deg,#0891b2,#22d3ee)}.info-teal{border-top:3px solid #0891b2}
-.info-teal .info-icon{color:#0891b2}
-
-.info-list{list-style:none!important;padding-left:0!important}
-.info-list li{padding:3px 0 3px 0;position:relative}
-.info-steps{display:flex;flex-direction:column;gap:8px;margin-top:4px}
-.info-step{display:flex;align-items:flex-start;gap:10px;font-size:.8em;color:#475569;line-height:1.6}
-.step-num{flex-shrink:0;width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#0891b2,#22d3ee);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.7em;font-weight:700}
-.info-step strong{color:#1e293b}
-
-@media(max-width:900px){.info-grid{grid-template-columns:1fr 1fr}}
-@media(max-width:600px){.info-grid{grid-template-columns:1fr}.landing-title{font-size:1.6em}}
-
-/* ═══════════════ END LANDING ═══════════════ */
-
-#results-area{margin-top:16px;position:relative}
-
-/* ── Reading Progress Bar ── */
-.reading-progress{position:fixed;top:56px;left:0;right:0;height:3px;z-index:999;background:#e2e8f0}
-.reading-progress .bar{height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#7c3aed,#16a34a);transition:width .1s linear;border-radius:0 2px 2px 0}
-
-/* ── Results Hero ── */
-.results-hero{text-align:center;padding:48px 28px 36px;margin-bottom:28px;background:linear-gradient(135deg,#0f172a 0%,#1a1a2e 40%,#1e293b 100%);border-radius:24px;color:#fff;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.06)}
-.results-hero::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 25% 40%,rgba(37,99,235,.18) 0%,transparent 50%),radial-gradient(circle at 75% 60%,rgba(124,58,237,.14) 0%,transparent 50%),radial-gradient(circle at 50% 80%,rgba(16,185,129,.08) 0%,transparent 40%);animation:heroGlow 10s ease-in-out infinite alternate}
-@keyframes heroGlow{0%{transform:translate(0,0) scale(1)}100%{transform:translate(-3%,2%) scale(1.02)}}
-.results-hero h1{font-size:1.8em;font-weight:800;letter-spacing:-.03em;margin-bottom:6px;position:relative;background:linear-gradient(135deg,#f8fafc,#94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.results-hero p{font-size:.85em;color:#64748b;position:relative;max-width:600px;margin:0 auto}
-.results-hero .hero-stats{display:flex;justify-content:center;gap:20px 40px;margin-top:24px;position:relative;flex-wrap:wrap}
-.results-hero .hero-stat{text-align:center;padding:12px 8px;min-width:100px}
-.results-hero .hero-stat .num{font-size:1.8em;font-weight:800;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.2}
-.results-hero .hero-stat .label{font-size:.68em;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-top:4px;font-weight:500}
+/* ═══════════════ RESULTS ═══════════════ */
+.results-hero{text-align:center;padding:40px 28px 32px;margin-bottom:22px;background:linear-gradient(135deg,#0f172a 0%,#1a1a2e 40%,#1e293b 100%);border-radius:22px;color:#fff;position:relative;overflow:hidden}
+.results-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 25% 40%,rgba(26,115,232,.2) 0%,transparent 50%),radial-gradient(circle at 75% 60%,rgba(124,58,237,.16) 0%,transparent 50%);pointer-events:none}
+.results-hero h1{font-size:1.7em;font-weight:800;letter-spacing:-.03em;margin-bottom:6px;position:relative}
+.results-hero p{font-size:.84em;color:#94a3b8;position:relative;max-width:600px;margin:0 auto}
+.results-hero .hero-stats{display:flex;justify-content:center;gap:24px 42px;margin-top:22px;position:relative;flex-wrap:wrap}
+.results-hero .hero-stat{text-align:center;padding:10px 6px;min-width:96px}
+.results-hero .hero-stat .num{font-size:1.7em;font-weight:800;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.2}
+.results-hero .hero-stat .label{font-size:.66em;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-top:4px;font-weight:500}
 .results-hero .hero-badge{display:inline-block;padding:4px 14px;border-radius:20px;font-size:.7em;font-weight:600;margin-bottom:12px;position:relative}
 
-/* ── Results Navigation ── */
-.results-nav-wrap{position:sticky;top:64px;z-index:50;margin-bottom:24px}
-.results-nav{display:flex;gap:3px;padding:6px;background:rgba(255,255,255,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(226,232,240,.8);border-radius:16px;box-shadow:0 4px 24px rgba(0,0,0,.06);overflow-x:auto;scrollbar-width:none}
+.results-nav-wrap{position:sticky;top:72px;z-index:50;margin-bottom:22px}
+.results-nav{display:flex;gap:3px;padding:6px;background:rgba(255,255,255,.92);backdrop-filter:blur(20px);border:1px solid rgba(218,220,224,.9);border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.06);overflow-x:auto;scrollbar-width:none}
 .results-nav::-webkit-scrollbar{display:none}
-.results-nav a{display:flex;align-items:center;gap:5px;padding:7px 12px;border-radius:10px;font-size:.72em;font-weight:600;color:var(--text2);text-decoration:none;white-space:nowrap;transition:all .25s cubic-bezier(.4,0,.2,1);position:relative;flex-shrink:0}
-.results-nav a:hover{background:#f1f5f9;color:var(--text);transform:translateY(-1px)}
-.results-nav a.active{background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;box-shadow:0 4px 12px rgba(37,99,235,.35)}
-.results-nav a .nav-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:rgba(0,0,0,.06);font-size:.8em;font-weight:700;transition:all .25s}
-.results-nav a.active .nav-num{background:rgba(255,255,255,.2);color:#fff}
+.results-nav a{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:9px;font-size:.71em;font-weight:600;color:var(--text2);text-decoration:none;white-space:nowrap;transition:all .2s;flex-shrink:0}
+.results-nav a:hover{background:#f1f3f4;color:var(--text)}
+.results-nav a.active{background:linear-gradient(135deg,#1a73e8,#7c3aed);color:#fff;box-shadow:0 4px 12px rgba(26,115,232,.35)}
+.results-nav a .nav-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:rgba(0,0,0,.06);font-size:.8em;font-weight:700}
+.results-nav a.active .nav-num{background:rgba(255,255,255,.22);color:#fff}
 
-/* ── Section Card ── */
-.res-section{background:var(--card);border:1px solid var(--border);border-radius:20px;margin-bottom:24px;overflow:hidden;transition:all .4s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 3px rgba(0,0,0,.04);opacity:0;transform:translateY(20px);animation:sectionReveal .6s cubic-bezier(.4,0,.2,1) forwards;position:relative}
-.res-section::before{content:'';position:absolute;top:0;left:0;width:4px;height:0%;background:linear-gradient(180deg,#2563eb,#7c3aed,#16a34a);border-radius:0 0 2px 2px;transition:height .8s cubic-bezier(.4,0,.2,1);z-index:1}
+.res-section{background:var(--card);border:1px solid var(--border);border-radius:18px;margin-bottom:20px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);opacity:0;transform:translateY(16px);animation:sectionReveal .5s cubic-bezier(.4,0,.2,1) forwards;position:relative}
+.res-section::before{content:'';position:absolute;top:0;left:0;width:4px;height:0%;background:linear-gradient(180deg,#1a73e8,#7c3aed,#34a853);border-radius:0 0 2px 2px;transition:height .8s;z-index:1}
 .res-section.visible::before{height:100%}
-.res-section:nth-child(1){animation-delay:0s}
-.res-section:nth-child(2){animation-delay:.06s}
-.res-section:nth-child(3){animation-delay:.12s}
 @keyframes sectionReveal{to{opacity:1;transform:translateY(0)}}
-.res-section:hover{box-shadow:0 8px 32px rgba(0,0,0,.08);border-color:#cbd5e1}
-
-.res-section-header{display:flex;align-items:flex-start;gap:14px;padding:20px 24px;cursor:pointer;user-select:none;transition:background .2s;position:relative;z-index:2}
-.res-section-header:hover{background:#fafbfc}
-.section-chevron{font-size:.55em;color:var(--text3);transition:transform .35s cubic-bezier(.4,0,.2,1);flex-shrink:0;margin-top:6px}
+.res-section-header{display:flex;align-items:flex-start;gap:14px;padding:18px 22px;cursor:pointer;user-select:none;position:relative;z-index:2}
+.section-chevron{font-size:.55em;color:var(--text3);transition:transform .3s;flex-shrink:0;margin-top:6px}
 .res-section-header.open .section-chevron{transform:rotate(180deg)}
-.section-icon-wrap{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,rgba(37,99,235,.08),rgba(124,58,237,.08));display:flex;align-items:center;justify-content:center;font-size:1.3em;flex-shrink:0;border:1px solid rgba(37,99,235,.1)}
 .section-title-group{flex:1;min-width:0}
 .section-title-row{display:flex;align-items:center;gap:10px;margin-bottom:2px}
-.section-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-size:.75em;font-weight:700;flex-shrink:0;box-shadow:0 2px 8px rgba(37,99,235,.25)}
-
-.res-section h2{font-size:1.05em;font-weight:800;color:var(--text);letter-spacing:-.01em;margin:0}
-.res-section .section-desc{font-size:.78em;color:var(--text2);line-height:1.65;margin:0}
-.section-complete-badge{font-size:.65em;font-weight:600;color:var(--green);background:#dcfce7;padding:3px 10px;border-radius:20px;margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:4px}
+.section-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-size:.75em;font-weight:700;flex-shrink:0}
+.res-section h2{font-size:1em;font-weight:800;color:var(--text);margin:0}
+.res-section .section-desc{font-size:.77em;color:var(--text2);line-height:1.6;margin:0}
+.section-complete-badge{font-size:.64em;font-weight:600;color:var(--green);background:#e6f4ea;padding:3px 10px;border-radius:20px;margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:4px}
 .section-complete-badge::before{content:'\2713';font-size:1.1em}
+.res-section-body{padding:0 22px 22px;position:relative;z-index:2}
+.res-section h3{font-size:.87em;font-weight:700;margin:18px 0 10px;color:var(--text);display:flex;align-items:center;gap:8px}
+.res-section h3::before{content:'';width:3px;height:17px;border-radius:2px;background:linear-gradient(180deg,var(--blue),var(--purple));flex-shrink:0}
+.res-section h4{font-size:.79em;font-weight:600;margin:12px 0 6px;color:var(--text2);text-transform:uppercase;letter-spacing:.03em}
 
-.res-section-body{padding:0 24px 24px 24px;position:relative;z-index:2}
-
-.res-section h3{font-size:.88em;font-weight:700;margin:20px 0 10px;color:var(--text);display:flex;align-items:center;gap:8px}
-.res-section h3::before{content:'';width:3px;height:18px;border-radius:2px;background:linear-gradient(180deg,var(--blue),var(--purple));flex-shrink:0}
-.res-section h4{font-size:.8em;font-weight:600;margin:12px 0 6px;color:var(--text2);text-transform:uppercase;letter-spacing:.03em}
-
-/* ── KPI Cards ── */
-.res-kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:16px}
-.res-kpi{background:var(--card);border:1px solid #e2e8f0;border-radius:14px;padding:18px 14px 14px;text-align:center;transition:all .3s cubic-bezier(.4,0,.2,1);position:relative;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.03)}
-.res-kpi::before{content:'';position:absolute;top:0;left:12px;right:12px;height:3px;border-radius:0 0 3px 3px;background:linear-gradient(90deg,var(--blue),var(--purple));opacity:0;transition:opacity .3s}
-.res-kpi::after{content:'';position:absolute;top:-50%;right:-50%;width:100%;height:100%;background:radial-gradient(circle,rgba(37,99,235,.04),transparent 70%);border-radius:50%;pointer-events:none}
-.res-kpi:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.08);border-color:#cbd5e1}
+.res-kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:12px;margin-bottom:14px}
+.res-kpi{background:var(--card);border:1px solid #e8eaed;border-radius:13px;padding:16px 12px 13px;text-align:center;transition:all .3s;position:relative;overflow:hidden}
+.res-kpi::before{content:'';position:absolute;top:0;left:12px;right:12px;height:3px;background:linear-gradient(90deg,var(--blue),var(--purple));opacity:0;transition:.3s}
+.res-kpi:hover{transform:translateY(-3px);box-shadow:0 8px 22px rgba(0,0,0,.08);border-color:#cbd5e1}
 .res-kpi:hover::before{opacity:1}
-.res-kpi .val{font-size:1.7em;font-weight:800;line-height:1.2;letter-spacing:-.02em;position:relative;z-index:1}
-.res-kpi .lbl{font-size:.68em;color:var(--text2);margin-top:6px;font-weight:500;letter-spacing:.02em;line-height:1.3;position:relative;z-index:1}
+.res-kpi .val{font-size:1.65em;font-weight:800;line-height:1.2;letter-spacing:-.02em}
+.res-kpi .lbl{font-size:.66em;color:var(--text2);margin-top:6px;font-weight:500;line-height:1.3}
 
-/* ── Progress Bars ── */
-.res-bar{height:6px;background:#e2e8f0;border-radius:6px;overflow:hidden;margin:4px 0;position:relative}
-.res-bar .fill{height:100%;border-radius:6px;transition:width .8s cubic-bezier(.4,0,.2,1);position:relative}
+.res-bar{height:6px;background:#e8eaed;border-radius:6px;overflow:hidden;margin:4px 0;position:relative}
+.res-bar .fill{height:100%;border-radius:6px;transition:width .8s;position:relative}
 .res-bar .fill::after{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.3),transparent);animation:barShimmer 2.5s infinite}
 @keyframes barShimmer{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
 
-/* ── Tables ── */
-.res-table-wrap{border-radius:14px;border:1px solid #e2e8f0;overflow:hidden;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.res-table-wrap{border-radius:13px;border:1px solid #e8eaed;overflow:hidden;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.03)}
 .res-table{width:100%;border-collapse:collapse;font-size:.8em}
-.res-table th{background:linear-gradient(180deg,#f8fafc,#f1f5f9);color:var(--text2);font-size:.68em;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0;position:sticky;top:0;z-index:1}
-.res-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;transition:all .15s}
+.res-table th{background:linear-gradient(180deg,#f8f9fa,#f1f3f4);color:var(--text2);font-size:.67em;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:10px 12px;text-align:left;border-bottom:2px solid #e8eaed;position:sticky;top:0;z-index:1}
+.res-table td{padding:9px 12px;border-bottom:1px solid #f1f3f4;transition:all .15s}
 .res-table tr:last-child td{border-bottom:0}
-.res-table tr:hover td{background:#f8fafc}
-.res-table tr:nth-child(even) td{background:rgba(241,245,249,.4)}
-.res-table tr:nth-child(even):hover td{background:#f1f5f9}
+.res-table tr:hover td{background:#f8f9fa}
+.res-table tr:nth-child(even) td{background:rgba(241,243,244,.4)}
+.res-table tr:nth-child(even):hover td{background:#f1f3f4}
 .res-table .brand-row{font-weight:600}
-.res-table .brand-row td{background:linear-gradient(90deg,#eff6ff,#f0f7ff)!important;border-bottom-color:#dbeafe}
+.res-table .brand-row td{background:linear-gradient(90deg,#e8f0fe,#f0f7ff)!important;border-bottom-color:#d2e3fc}
 
-/* ── Tags ── */
-.res-tag{display:inline-flex;align-items:center;padding:3px 10px;border-radius:6px;font-size:.68em;font-weight:700;margin:1px 3px;letter-spacing:.02em;transition:all .2s}
-.res-tag:hover{transform:translateY(-1px)}
-.res-tag.high{background:linear-gradient(135deg,#fef2f2,#fee2e2);color:#b91c1c;border:1px solid #fecaca}
-.res-tag.med{background:linear-gradient(135deg,#fffbeb,#fef9c3);color:#a16207;border:1px solid #fde68a}
-.res-tag.low{background:linear-gradient(135deg,#f0fdf4,#dcfce7);color:#15803d;border:1px solid #bbf7d0}
-.res-tag.blue{background:linear-gradient(135deg,#eff6ff,#dbeafe);color:#1d4ed8;border:1px solid #bfdbfe}
-.res-tag.purple{background:linear-gradient(135deg,#f5f3ff,#ede9fe);color:#6d28d9;border:1px solid #ddd6fe}
+.res-tag{display:inline-flex;align-items:center;padding:3px 10px;border-radius:6px;font-size:.67em;font-weight:700;margin:1px 3px;transition:all .2s}
+.res-tag.high{background:linear-gradient(135deg,#fce8e6,#f8d7d6);color:#c5221f;border:1px solid #f6c8c6}
+.res-tag.med{background:linear-gradient(135deg,#fef7e0,#fcefc3);color:#a15c00;border:1px solid #fde9a8}
+.res-tag.low{background:linear-gradient(135deg,#e6f4ea,#d4edda);color:#137333;border:1px solid #b7dfc3}
+.res-tag.blue{background:linear-gradient(135deg,#e8f0fe,#d2e3fc);color:#174ea6;border:1px solid #aecbfa}
+.res-tag.purple{background:linear-gradient(135deg,#f3e8fd,#e8d5fa);color:#681da8;border:1px solid #d9b8f4}
 
-/* ── Insights ── */
-.res-insight{border-left:4px solid var(--blue);padding:14px 18px;margin:10px 0;background:linear-gradient(135deg,#eff6ff,#f0f7ff);border-radius:0 12px 12px 0;font-size:.8em;line-height:1.65;transition:all .25s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 2px rgba(0,0,0,.03)}
-.res-insight:hover{transform:translateX(3px);box-shadow:0 2px 8px rgba(0,0,0,.06)}
-.res-insight.warn{border-left-color:var(--yellow);background:linear-gradient(135deg,#fffbeb,#fef9c3)}
-.res-insight.danger{border-left-color:var(--red);background:linear-gradient(135deg,#fef2f2,#fee2e2)}
-.res-insight.success{border-left-color:var(--green);background:linear-gradient(135deg,#f0fdf4,#dcfce7)}
+.res-insight{border-left:4px solid var(--blue);padding:13px 16px;margin:10px 0;background:linear-gradient(135deg,#e8f0fe,#f0f7ff);border-radius:0 11px 11px 0;font-size:.79em;line-height:1.65;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+.res-insight.warn{border-left-color:var(--yellow);background:linear-gradient(135deg,#fef7e0,#fcf1cf)}
+.res-insight.danger{border-left-color:var(--red);background:linear-gradient(135deg,#fce8e6,#fde0de)}
+.res-insight.success{border-left-color:var(--green);background:linear-gradient(135deg,#e6f4ea,#dceef2)}
 
-/* ── Grids ── */
 .res-grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .res-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
 @media(max-width:900px){.res-grid2,.res-grid3{grid-template-columns:1fr}}
 
-/* ── Quotes ── */
-.res-quote{font-style:italic;color:var(--text2);font-size:.76em;padding:10px 14px;background:#f8fafc;border-radius:8px;margin:8px 0;border-left:3px solid #cbd5e1;line-height:1.6;position:relative}
-.res-quote::before{content:'"';position:absolute;top:2px;left:6px;font-size:1.4em;color:#cbd5e1;font-family:Georgia,serif}
+.res-quote{font-style:italic;color:var(--text2);font-size:.76em;padding:10px 14px;background:#f8f9fa;border-radius:8px;margin:8px 0;border-left:3px solid #dadce0;line-height:1.6;position:relative}
 
-/* ── Business Impact Card ── */
-.res-business-impact{background:linear-gradient(135deg,#faf5ff 0%,#ede9fe 40%,#f0f7ff 100%);border:1px solid #c4b5fd;border-radius:16px;padding:22px;margin:18px 0;position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(124,58,237,.08)}
-.res-business-impact::before{content:'';position:absolute;top:-30px;right:-30px;width:140px;height:140px;background:radial-gradient(circle,rgba(124,58,237,.12),transparent 70%);border-radius:50%}
-.res-business-impact::after{content:'';position:absolute;bottom:-20px;left:-20px;width:80px;height:80px;background:radial-gradient(circle,rgba(59,130,246,.08),transparent 70%);border-radius:50%}
+.res-business-impact{background:linear-gradient(135deg,#f3e8fd 0%,#e8d5fa 40%,#e8f0fe 100%);border:1px solid #c4b5fd;border-radius:15px;padding:20px;margin:16px 0;position:relative;overflow:hidden}
 .res-business-impact h4{display:flex;align-items:center;gap:8px;font-size:.82em!important}
-.res-business-impact h4::before{content:'';width:4px;height:18px;border-radius:2px;background:linear-gradient(180deg,#7c3aed,#a78bfa);flex-shrink:0}
-.res-business-impact .impact-item{font-size:.78em;color:var(--text2);margin:6px 0;padding:8px 12px 8px 16px;border-left:2px solid rgba(124,58,237,.2);border-radius:0 6px 6px 0;transition:all .2s;position:relative;z-index:1}
-.res-business-impact .impact-item:hover{border-left-color:#7c3aed;background:rgba(124,58,237,.04);transform:translateX(2px)}
+.res-business-impact h4::before{content:'';width:4px;height:17px;border-radius:2px;background:linear-gradient(180deg,#7c3aed,#a78bfa);flex-shrink:0}
+.res-business-impact .impact-item{font-size:.78em;color:var(--text2);margin:6px 0;padding:8px 12px 8px 16px;border-left:2px solid rgba(124,58,237,.2);border-radius:0 6px 6px 0;position:relative;z-index:1}
 .res-business-impact .impact-item strong{color:var(--text)}
 
-/* ── Implementation Guide Card ── */
-.res-impl-guide{background:linear-gradient(135deg,#f0fdf4 0%,#dcfce7 40%,#f0f7ff 100%);border:1px solid #86efac;border-radius:16px;padding:22px;margin:18px 0;position:relative;overflow:hidden;box-shadow:0 2px 8px rgba(22,163,74,.08)}
-.res-impl-guide::before{content:'';position:absolute;bottom:-30px;left:-30px;width:140px;height:140px;background:radial-gradient(circle,rgba(22,163,74,.1),transparent 70%);border-radius:50%}
-.res-impl-guide::after{content:'';position:absolute;top:-20px;right:-20px;width:80px;height:80px;background:radial-gradient(circle,rgba(16,185,129,.08),transparent 70%);border-radius:50%}
+.res-impl-guide{background:linear-gradient(135deg,#e6f4ea 0%,#d4edda 40%,#e8f0fe 100%);border:1px solid #b7dfc3;border-radius:15px;padding:20px;margin:16px 0;position:relative;overflow:hidden}
 .res-impl-guide h4{display:flex;align-items:center;gap:8px;font-size:.82em!important}
-.res-impl-guide h4::before{content:'';width:4px;height:18px;border-radius:2px;background:linear-gradient(180deg,#16a34a,#4ade80);flex-shrink:0}
+.res-impl-guide h4::before{content:'';width:4px;height:17px;border-radius:2px;background:linear-gradient(180deg,#188038,#4ade80);flex-shrink:0}
 .res-impl-guide ol{counter-reset:step;list-style:none;padding:0!important;position:relative;z-index:1}
-.res-impl-guide ol li{counter-increment:step;font-size:.78em;color:var(--text2);margin:8px 0;padding:8px 12px 8px 36px;border-left:2px solid rgba(22,163,74,.15);border-radius:0 6px 6px 0;transition:all .2s;position:relative}
-.res-impl-guide ol li::before{content:counter(step);position:absolute;left:8px;top:8px;width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#16a34a,#4ade80);color:#fff;font-size:.7em;font-weight:700;display:flex;align-items:center;justify-content:center}
-.res-impl-guide ol li:hover{border-left-color:#16a34a;background:rgba(22,163,74,.04);transform:translateX(2px)}
+.res-impl-guide ol li{counter-increment:step;font-size:.78em;color:var(--text2);margin:8px 0;padding:8px 12px 8px 36px;border-left:2px solid rgba(24,128,56,.15);border-radius:0 6px 6px 0;position:relative}
+.res-impl-guide ol li::before{content:counter(step);position:absolute;left:8px;top:8px;width:20px;height:20px;border-radius:6px;background:linear-gradient(135deg,#188038,#4ade80);color:#fff;font-size:.7em;font-weight:700;display:flex;align-items:center;justify-content:center}
 .res-impl-guide ol li strong{color:var(--text)}
 
-/* ── Deep Analysis ── */
-.res-deep{font-size:.8em;color:var(--text2);line-height:1.75;margin:12px 0;padding:16px 20px;background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%);border-radius:12px;border:1px solid #e2e8f0;border-left:4px solid var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.res-deep{font-size:.79em;color:var(--text2);line-height:1.75;margin:12px 0;padding:16px 18px;background:linear-gradient(135deg,#f8f9fa 0%,#f1f3f4 100%);border-radius:12px;border:1px solid #e8eaed;border-left:4px solid var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.03)}
 
-/* ── Modal/Section Stats Summary ── */
-.res-stats-bar{display:flex;gap:16px;flex-wrap:wrap;padding:12px 0;margin-bottom:12px}
-.res-stat-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:.72em;font-weight:600;background:#f1f5f9;color:var(--text2);border:1px solid #e2e8f0;transition:all .2s}
-.res-stat-chip:hover{background:#e2e8f0;transform:translateY(-1px)}
-
-/* ── Back to Top Button ── */
-#btn-back-top{position:fixed;bottom:24px;right:24px;width:44px;height:44px;border:0;border-radius:14px;font-size:1.1em;cursor:pointer;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.15);transition:all .25s cubic-bezier(.4,0,.2,1);display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,#475569,#334155);opacity:0;pointer-events:none;transform:translateY(10px);z-index:200}
+#btn-back-top{position:fixed;bottom:22px;right:22px;width:44px;height:44px;border:0;border-radius:13px;font-size:1.1em;cursor:pointer;font-family:inherit;box-shadow:0 4px 16px rgba(0,0,0,.18);display:flex;align-items:center;justify-content:center;color:#fff;background:linear-gradient(135deg,#5f6368,#3c4043);opacity:0;pointer-events:none;transform:translateY(10px);transition:all .25s;z-index:200}
 #btn-back-top.visible{opacity:1;pointer-events:auto;transform:translateY(0)}
-#btn-back-top:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.2)}
-#btn-back-top .tooltip{position:absolute;right:52px;top:50%;transform:translateY(-50%);background:#1e293b;color:#fff;font-size:.7em;font-weight:600;padding:5px 10px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:all .2s}
-#btn-back-top:hover .tooltip{opacity:1}
+.reading-progress{position:fixed;top:60px;left:0;right:0;height:3px;z-index:99;background:#e8eaed}
+.reading-progress .bar{height:100%;width:0%;background:linear-gradient(90deg,#1a73e8,#7c3aed,#34a853);transition:width .1s linear}
 
-
-/* ── PDF ── */
-.pdf-loading-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.9);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:12px}
-.pdf-loading-overlay .spinner{width:40px;height:40px;border:4px solid #e2e8f0;border-top-color:#2563eb;border-radius:50%;animation:spin .8s linear infinite}
+.pdf-loading-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;z-index:9999;flex-direction:column;gap:12px}
+.pdf-loading-overlay .spinner{width:40px;height:40px;border:4px solid #e8eaed;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 
-@page{
-  size:A4 portrait;
-  margin:6mm 0;
-}
 @media print{
   *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
   html,body{margin:0!important;padding:0!important;width:100%!important}
-  .topbar,.card,.bgrp,.section-label,.toast,#run-progress,#run-log-wrap,#quick-progress,.reading-progress,.results-nav-wrap,.btn,.pdf-loading-overlay,.landing-hero,.info-grid{display:none!important}
+  .topbar,.card,.bgrp,.section-label,.toast,#run-progress,#run-log-wrap,.reading-progress,.results-nav-wrap,.btn,.pdf-loading-overlay,.input-hero{display:none!important}
   .main{padding:0!important;max-width:100%!important;margin:0!important;width:100%!important}
-  #results-area{display:block!important;margin:0!important;padding:0!important;width:100%!important;max-width:100%!important}
-  body{font-size:11px;color:#1e293b;background:#fff;font-family:'Google Sans','Roboto','Inter',system-ui,sans-serif;line-height:1.6}
+  body{font-size:11px;color:#202124;background:#fff;line-height:1.6}
   a{text-decoration:none;color:inherit}
   .results-hero{margin:0!important;padding:36px 20px 28px!important;border-radius:0!important;border:0!important;background:#1e293b!important;page-break-inside:avoid;page-break-after:always;width:100%!important;box-sizing:border-box!important;text-align:center!important}
-  .results-hero h1{-webkit-text-fill-color:#fff!important;background:none!important;color:#fff!important;font-size:1.6em!important;letter-spacing:-.02em;font-weight:800}
+  .results-hero h1{color:#fff!important;font-size:1.6em!important;font-weight:800}
   .results-hero p{color:#94a3b8!important;font-size:.85em!important}
-  .results-hero .hero-stat .num{-webkit-text-fill-color:#60a5fa!important;background:none!important;color:#60a5fa!important;font-weight:800}
+  .results-hero .hero-stat .num{color:#60a5fa!important;font-weight:800}
   .results-hero .hero-stat .label{color:#94a3b8!important}
-  .results-hero .hero-badge{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .res-section{page-break-inside:avoid!important;box-shadow:none!important;border:1px solid #d1d5db!important;opacity:1!important;transform:none!important;animation:none!important;border-radius:0!important;margin:0 0 10px 0!important;background:#fff!important;width:100%!important;max-width:100%!important;display:block!important;overflow:visible!important}
+  .res-section{page-break-inside:avoid!important;box-shadow:none!important;border:1px solid #dadce0!important;opacity:1!important;transform:none!important;animation:none!important;border-radius:0!important;margin:0 0 10px!important;background:#fff!important;width:100%!important;max-width:100%!important;display:block!important;overflow:visible!important}
   .res-section::before{display:none!important}
-  .res-section-header{cursor:default!important;padding:10px 16px!important;background:#f9fafb!important;border-bottom:1px solid #d1d5db!important}
-  .section-chevron{display:none!important}
-  .section-complete-badge{display:none!important}
-  .res-section-body{max-height:none!important;overflow:visible!important;padding:4px 16px 16px 16px!important;display:block!important}
-  .res-section h2{font-size:1.05em!important;font-weight:800!important;color:#1e293b!important;margin:0!important}
-  .res-section h3{font-size:.9em!important;margin:12px 0 6px!important;color:#1e293b!important;font-weight:700!important}
-  .res-section h3::before{height:14px!important}
-  .res-section h4{font-size:.82em!important;font-weight:600!important;color:#64748b!important;text-transform:uppercase;letter-spacing:.04em}
-  .res-section .section-desc{font-size:.8em!important;margin-bottom:6px!important;color:#64748b!important}
+  .res-section-header{cursor:default!important;padding:10px 16px!important;background:#f8f9fa!important;border-bottom:1px solid #dadce0!important}
+  .section-chevron,.section-complete-badge{display:none!important}
+  .res-section-body{max-height:none!important;overflow:visible!important;padding:4px 16px 16px!important;display:block!important}
+  .res-section h2{font-size:1.05em!important;font-weight:800!important;color:#202124!important;margin:0!important}
+  .res-section h3{font-size:.9em!important;margin:12px 0 6px!important;color:#202124!important}
+  .res-section h4{font-size:.82em!important;color:#5f6368!important}
+  .res-section .section-desc{font-size:.8em!important;margin-bottom:6px!important;color:#5f6368!important}
   .res-kpi-row{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:6px!important;margin:8px 0 12px!important}
-  .res-kpi{border:1px solid #d1d5db!important;border-radius:6px!important;padding:10px 8px!important;page-break-inside:avoid!important;background:#fff!important}
-  .res-kpi::before{display:none!important}
-  .res-kpi::after{display:none!important}
+  .res-kpi{border:1px solid #dadce0!important;border-radius:6px!important;padding:10px 8px!important;page-break-inside:avoid!important;background:#fff!important}
+  .res-kpi::before,.res-kpi::after{display:none!important}
   .res-kpi .val{font-size:1.25em!important;font-weight:800!important}
-  .res-kpi .lbl{font-size:.7em!important;color:#64748b!important;font-weight:500!important}
-  .res-kpi:hover{transform:none!important;box-shadow:none!important}
+  .res-kpi .lbl{font-size:.7em!important;color:#5f6368!important}
   .res-table-wrap{border-radius:6px!important;page-break-inside:avoid;overflow:hidden!important}
-  .res-table{font-size:.78em!important;width:100%!important;border-collapse:collapse!important}
-  .res-table th{background:#f1f5f9!important;padding:6px 8px!important;font-size:.72em!important;font-weight:700!important;border-bottom:2px solid #d1d5db!important}
-  .res-table td{padding:5px 8px!important;border-bottom:1px solid #f1f5f9!important;font-size:.78em!important}
+  .res-table{font-size:.78em!important;width:100%!important}
+  .res-table th{background:#f1f3f4!important;padding:6px 8px!important;font-size:.72em!important;font-weight:700!important}
+  .res-table td{padding:5px 8px!important;font-size:.78em!important}
   .res-table tr:hover td{background:transparent!important}
-  .res-table .brand-row td{background:#eff6ff!important}
-  .res-insight{page-break-inside:avoid!important;margin:6px 0!important;padding:10px 14px!important;border-radius:0 6px 6px 0!important;font-size:.82em!important;line-height:1.6!important}
-  .res-deep{page-break-inside:avoid!important;margin:8px 0!important;padding:10px 14px!important;font-size:.82em!important;line-height:1.65!important;border-radius:6px!important}
-  .res-business-impact{page-break-inside:avoid!important;margin:10px 0!important;padding:14px 16px!important;border-radius:10px!important}
-  .res-business-impact h4{font-size:.88em!important}
-  .res-business-impact .impact-item{font-size:.8em!important;margin:4px 0!important;padding:6px 10px 6px 14px!important}
-  .res-impl-guide{page-break-inside:avoid!important;margin:10px 0!important;padding:14px 16px!important;border-radius:10px!important}
-  .res-impl-guide h4{font-size:.88em!important}
-  .res-impl-guide ol li{font-size:.8em!important;margin:4px 0!important;padding:6px 10px 6px 30px!important}
-  .res-quote{font-size:.8em!important;padding:6px 12px!important;border-radius:6px!important}
-  .res-tag{font-size:.72em!important;padding:3px 8px!important}
+  .res-table .brand-row td{background:#e8f0fe!important}
+  .res-insight{page-break-inside:avoid!important;margin:6px 0!important;padding:10px 14px!important;border-radius:0 6px 6px 0!important;font-size:.82em!important}
+  .res-deep{page-break-inside:avoid!important;margin:8px 0!important;padding:10px 14px!important;font-size:.82em!important}
+  .res-business-impact,.res-impl-guide{page-break-inside:avoid!important;margin:10px 0!important;padding:14px 16px!important;border-radius:10px!important}
+  .res-quote{font-size:.8em!important;padding:6px 12px!important}
+  .res-tag{font-size:.72em!important}
   .js-plotly-plot,.plotly-notifier,.modebar{display:none!important}
   img[src*="data:image"]{max-width:100%!important;display:block!important;height:auto!important}
   .res-bar{height:4px!important}
-  .pdf-cover{page-break-after:always!important;page-break-inside:avoid!important}
-  .pdf-section-break{page-break-before:always!important}
-  .res-insight:hover,.res-kpi:hover{transform:none!important;box-shadow:none!important}
-  .res-grid2{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
-  .res-grid3{display:grid!important;grid-template-columns:1fr 1fr 1fr!important;gap:8px!important}
-  .results-hero .hero-stats{gap:10px 24px!important}
-  .res-business-impact::before,.res-business-impact::after,.res-impl-guide::before,.res-impl-guide::after{display:none!important}
 }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <div class="logo">AEO Citation Graph Simulator</div>
+  <div class="logo"><span class="dot"></span>AEO Citation Graph Simulator</div>
+  <div class="nav-tabs" id="nav-tabs">
+    <button class="tab active" data-page="page-inputs" onclick="switchPage('page-inputs')">System Inputs</button>
+    <button class="tab" data-page="page-results" onclick="switchPage('page-results')">Results</button>
+  </div>
   <div class="status idle" id="top-status">Ready</div>
 </div>
 
 <div class="main">
 
-<!-- ═══════════════ LANDING HERO ═══════════════ -->
-<div class="landing-hero">
-  <div class="landing-hero-inner">
-    <div class="landing-badge">AEO &amp; LLM Citation Graph Simulator v1.0</div>
-    <h1 class="landing-title">Dominate AI Search Visibility</h1>
-    <p class="landing-sub">The first open-source platform that reverse-engineers how LLMs see your brand &mdash; and tells you exactly how to fix it. Replaces $15,000&ndash;$25,000/month AEO agency retainers.</p>
-  </div>
-</div>
+<!-- ═══════════════ PAGE 1: INPUTS ═══════════════ -->
+<div class="page active" id="page-inputs">
 
-<div class="info-grid">
-  <!-- What Is It -->
-  <div class="info-card info-blue">
-    <h3>What Is It?</h3>
-    <p>An enterprise-grade <strong>Generative Engine Optimization (GEO)</strong> intelligence platform that analyzes how AI models &mdash; ChatGPT, Claude, Gemini, Perplexity, DeepSeek &mdash; perceive, rank, and recommend your brand versus competitors. It builds live citation graphs, extracts structured knowledge triples, and maps your brand's semantic positioning across every major LLM.</p>
-  </div>
-
-  <!-- What Is It For -->
-  <div class="info-card info-purple">
-    <h3>What Is It For?</h3>
-    <p>If your customers are asking ChatGPT for product recommendations and your brand is <strong>invisible</strong>, you're losing deals you'll never know about. This tool answers: <em>"What do LLMs actually say about my brand, where do they get it, and how do I fix what's wrong?"</em> &mdash; before your competitors figure it out.</p>
-  </div>
-
-  <!-- What Can It Do -->
-  <div class="info-card info-green">
-    <h3>What Can It Do?</h3>
-    <ul class="info-list">
-      <li><strong>Share of Model Voice (SoMV)</strong> &mdash; your brand visibility score across every LLM</li>
-      <li><strong>Citation Graph Mapping</strong> &mdash; see exactly which sources LLMs use and where you're missing</li>
-      <li><strong>Triple Extraction</strong> &mdash; structured (Subject &rarr; Predicate &rarr; Object) claims LLMs make about you</li>
-      <li><strong>Sentiment &amp; Bias Detection</strong> &mdash; find negative patterns and hallucination risks</li>
-      <li><strong>RAG vs Base Weight Attribution</strong> &mdash; know if your problem is web indexing or pre-training</li>
-      <li><strong>Semantic Embedding Analysis</strong> &mdash; how LLMs cluster your brand semantically vs competitors</li>
-      <li><strong>Competitive Gap Analysis</strong> &mdash; exactly where competitors lead and you lag</li>
-      <li><strong>Actionable Recommendations</strong> &mdash; prioritized fix list with business impact estimates</li>
-    </ul>
-  </div>
-
-  <!-- What Do You Need -->
-  <div class="info-card info-yellow">
-    <h3>What Do You Need to Start?</h3>
-    <ul class="info-list">
-      <li><strong>Nothing to try it</strong> &mdash; click "Generate Sample Data" for a full demo with synthetic data</li>
-      <li><strong>API Keys (optional)</strong> &mdash; OpenAI, Anthropic, Google, or DeepSeek keys for real LLM queries</li>
-      <li><strong>Your own data (optional)</strong> &mdash; upload JSON files with prompts, brand entities, or past results</li>
-      <li><strong>Python 3.9+</strong> &mdash; for the analysis engine (auto-detected)</li>
-      <li><strong>Node.js 18+</strong> &mdash; runs the web dashboard and orchestrator</li>
-    </ul>
-  </div>
-
-  <!-- What to Expect -->
-  <div class="info-card info-red">
-    <h3>What to Expect</h3>
-    <ul class="info-list">
-      <li><strong>8-stage analysis pipeline</strong> completes in 2&ndash;5 minutes</li>
-      <li><strong>9 detailed report sections</strong> with executive summary, deep dives, and charts</li>
-      <li><strong>Prioritized recommendations</strong> ranked by business impact</li>
-      <li><strong>Exportable PDF report</strong> &mdash; shareable with leadership and agencies</li>
-      <li><strong>100% local</strong> &mdash; no data leaves your machine, no cloud dependency</li>
-    </ul>
-  </div>
-
-  <!-- How It Works -->
-  <div class="info-card info-teal">
-    <h3>How It Works</h3>
-    <div class="info-steps">
-      <div class="info-step"><span class="step-num">1</span> <strong>Upload or Generate</strong> &mdash; supply prompts or use built-in sample data</div>
-      <div class="info-step"><span class="step-num">2</span> <strong>Query LLMs</strong> &mdash; sends thousands of prompts across 5 AI models</div>
-      <div class="info-step"><span class="step-num">3</span> <strong>Analyze</strong> &mdash; 8-stage pipeline extracts insights from raw responses</div>
-      <div class="info-step"><span class="step-num">4</span> <strong>Act</strong> &mdash; follow prioritized recommendations to boost AI visibility</div>
+  <div class="input-hero">
+    <div>
+      <div class="title">Configure Your Simulation</div>
+      <div class="desc">Define your brand, competitive set, and the enterprise-level system layers that shape how real buyers see you in AI answers &mdash; RAG search context, temporal model freshness, and geographic localization.</div>
+    </div>
+    <div style="margin-left:auto">
+      <span class="badge">5 Enterprise Layers</span>
     </div>
   </div>
-</div>
-<!-- ═══════════════ END LANDING ═══════════════ -->
 
-<!-- QUICK START -->
-<div class="card" style="border:2px solid #bfdbfe;background:#f0f7ff">
-  <h2>Quick Start</h2>
-  <p class="sub">Generate 500 sample records across 5 LLMs and run the full analysis pipeline.</p>
-  <div class="bgrp">
-    <button class="btn btn-blue" onclick="generateAndAnalyze()">Generate Sample Data &amp; Run Analysis</button>
-    <span style="font-size:.8em;color:var(--text2)" id="quick-status-text"></span>
+  <div class="section-label">1 &middot; Brand &amp; Competitive Set</div>
+  <div class="card">
+    <h2>Brand &amp; Competitors</h2>
+    <p class="sub">Who you are, who you are compared against, and the category you compete in.</p>
+    <div class="cols3">
+      <div class="fg">
+        <label>Your Brand Name *</label>
+        <input type="text" id="inp-brand" placeholder="e.g. Acme Corp">
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Your official company name — the exact legal/external-facing name. Use the same name you search for in ChatGPT/Google. <span class="tool">Tool:</span> no tool needed, it's your company name.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="fg">
+        <label>Brand Website</label>
+        <input type="url" id="inp-website" placeholder="https://acme.com">
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Your homepage URL. Used to verify crawler access (robots.txt) and build ground-truth citations. <span class="tool">Tool:</span> just your site URL; test it with <span class="tool">site:yourdomain.com</span> in Google.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="fg">
+        <label>Product Category</label>
+        <input type="text" id="inp-category" placeholder="e.g. cloud security">
+        <div class="hint-note" style="display:none"><b>Where to find:</b> The market/category term buyers actually use. <span class="tool">Tools:</span> <b>Google Autocomplete</b>, <b>AlsoAsked.com</b>, <b>AnswerThePublic</b> to see the exact phrasing buyers type.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+    </div>
+    <div class="fg">
+      <label>Competitors</label>
+      <div id="comp-list"></div>
+      <div class="comp-row">
+        <input type="text" id="inp-comp" placeholder="Add competitor name">
+        <button class="btn btn-outline" onclick="addCompetitor()">+ Add</button>
+      </div>
+      <div class="hint-note" style="display:none"><b>Where to find:</b> The brands you lose deals to. <span class="tool">Tools:</span> ask ChatGPT/Claude "who are the top {category} vendors?", check <b>G2</b>, <b>Gartner Magic Quadrant</b>, or your CRM win/loss reports.</div>
+      <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+    </div>
   </div>
-  <div id="quick-progress" class="hidden"><div class="progress"><div class="bar" style="width:30%"></div></div></div>
-</div>
 
-<div class="section-label">Data Input</div>
-
-<!-- UPLOAD 1: Prompts -->
-<div class="card">
-  <h2>1. Core Prompt Inputs <span class="pill p-blue">Required</span></h2>
-  <p class="sub">5,000 synthetic prompts as 3-5 turn conversation trees, persona vectors, negative prompt matrices.</p>
-  <div class="dropzone" id="dz-prompts" data-s="prompts">
-    <div class="ico" style="font-size:1.1em;font-weight:700;color:var(--blue)">+</div><div class="ttl">Drop prompt files (JSON/CSV)</div>
-    <div class="hint">Conversation trees, persona vectors, negative prompt matrix</div>
-    <input type="file" accept=".json,.csv" multiple>
+  <div class="section-label">2 &middot; Dynamic Search-Informed Context (RAG Invalidation Vectors)</div>
+  <div class="card">
+    <h2>Capture the Search Queries Behind Every Answer <span class="pill p-blue">New</span></h2>
+    <p class="sub">Search-augmented LLMs reformulate your buyer's question into hidden web-search queries before answering. Log those dynamic queries to expose <em>why</em> the model fetched the wrong (or right) sources.</p>
+    <div class="toggle-row">
+      <div>
+        <div class="tlabel">Enable Dynamic Search Capture</div>
+        <div class="tdesc">Log the LLM-generated search queries executed behind the scenes during retrieval</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="rag-enabled" checked><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <div>
+        <div class="tlabel">Capture Hidden / Model-Generated Queries</div>
+        <div class="tdesc">Store every internal query reformulation alongside the response</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="rag-capture-hidden" checked><span class="slider"></span></label>
+    </div>
+    <div id="rag-fields">
+      <div class="cols2" style="margin-top:12px">
+        <div class="fg">
+          <label>Max Search Queries per Prompt</label>
+          <input type="number" id="rag-max-queries" min="1" max="10" value="3">
+          <div class="hint-note" style="display:none"><b>What this does:</b> How many hidden web-search queries the LLM may generate per buyer question. <span class="tool">Tip:</span> leave at 3 — more queries = more sources captured but higher API cost.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Retrieval Source Priority</label>
+          <select id="rag-source-priority">
+            <option value="auto">Auto (LLM chooses)</option>
+            <option value="google">Prefer Google-indexed sources</option>
+            <option value="bing">Prefer Bing-indexed sources</option>
+            <option value="specialized">Prefer specialized (Reddit, docs, news)</option>
+          </select>
+          <div class="hint-note" style="display:none"><b>What this does:</b> Which index the retrieval layer should favor. <span class="tool">Note:</span> ChatGPT uses Bing internally; Perplexity and Gemini mix multiple indexes. Auto is safest.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+      </div>
+      <div class="fg">
+        <label>RAG Invalidation Vector Templates (one per line)</label>
+        <textarea id="rag-templates" rows="3" placeholder="One query template per line. Use {brand} and {category} placeholders.
+Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
+        <div class="hint-note" style="display:none"><b>What this does:</b> The query patterns the LLM reformulates before searching. <span class="tool">Tool:</span> generate realistic ones with <b>AlsoAsked.com</b> (real "People Also Ask" queries) or ask ChatGPT "what queries would a {category} buyer search?". Use {brand} and {category} placeholders.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+    </div>
   </div>
-  <div class="files" id="fl-prompts"></div>
-  <details style="margin-top:6px"><summary style="cursor:pointer;font-size:.78em;color:var(--text2)">Or paste JSON</summary>
-    <textarea id="pp" placeholder='Paste prompts JSON...' style="margin-top:6px"></textarea>
-    <button class="btn btn-blue btn-sm" style="margin-top:4px" onclick="pasteSubmit('prompts','pp')">Submit</button>
-  </details>
-</div>
 
-<!-- UPLOAD 2: Entities -->
-<div class="card">
-  <h2>2. Entity Map &amp; Knowledge Base <span class="pill p-green">Recommended</span></h2>
-  <p class="sub">Wikidata URIs, Knowledge Graph IDs, alias dictionaries, competitor feature topology.</p>
-  <div class="dropzone" id="dz-entities" data-s="entities">
-    <div class="ico" style="font-size:1.1em;font-weight:700;color:var(--purple)">+</div><div class="ttl">Drop entity map files (JSON)</div>
-    <div class="hint">Brand URIs, alias dictionaries, competitor feature matrix</div>
-    <input type="file" accept=".json" multiple>
+  <div class="section-label">3 &middot; Temporal Grounding &amp; Model Freshness Indexing</div>
+  <div class="card">
+    <h2>Ground Answers to a Content-Freshness Timestamp <span class="pill p-blue">New</span></h2>
+    <p class="sub">LLM responses drift across model update cycles and index re-crawls. Pin a freshness timestamp and run identical prompts against historical model snapshots to isolate whether a SoMV shift came from <em>your site</em> or the <em>model re-indexing</em>.</p>
+    <div class="toggle-row">
+      <div>
+        <div class="tlabel">Enable Temporal Grounding</div>
+        <div class="tdesc">Attach a content-freshness reference point to every query</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="temporal-enabled" checked><span class="slider"></span></label>
+    </div>
+    <div id="temporal-fields">
+      <div class="cols3" style="margin-top:12px">
+        <div class="fg">
+          <label>Content Freshness Timestamp</label>
+          <input type="date" id="temporal-timestamp">
+          <div class="hint-note" style="display:none"><b>Where to find:</b> Today's date or your last site-wide content refresh date. <span class="tool">Tool:</span> check your CMS "last modified" report (WordPress: <span class="tool">WP last updated</span> column, or run a sitemap crawl with <span class="tool">Screaming Frog</span> and sort by <code>lastmod</code>).</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Baseline Model Snapshot</label>
+          <input type="text" id="temporal-snap-a" placeholder="e.g. gpt-4o-2024-05-13">
+          <div class="hint-note" style="display:none"><b>Where to find:</b> The exact model + snapshot ID. <span class="tool">Tools:</span> <b>OpenAI</b> model docs (<span class="tool">platform.openai.com/docs/models</span>), <b>Anthropic</b> release notes, <b>Google</b> Gemini version history, <b>LMSYS Chatbot Arena</b> leaderboard for naming. Format: <code>model-snapshotdate</code>.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Current Model Snapshot</label>
+          <input type="text" id="temporal-snap-b" placeholder="e.g. gpt-4o-2024-08-06">
+          <div class="hint-note" style="display:none"><b>Where to find:</b> The current live snapshot of the same model. <span class="tool">Tool:</span> same docs as above — compare old vs new snapshot to isolate "model re-index drift" from "your site change".</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+      </div>
+      <div class="fg">
+        <label>Run Identical Prompts Across Snapshots</label>
+        <select id="temporal-compare-mode">
+          <option value="paired">Paired A/B (same prompts, both snapshots)</option>
+          <option value="freshness_only">Freshness timestamp only</option>
+        </select>
+        <div class="hint-note" style="display:none"><b>What this does:</b> Paired A/B runs the same buyer prompt against both snapshots so you can attribute a SoMV delta to the model's re-index instead of your content. <span class="tool">Tip:</span> use Paired A/B for the 20 highest-value prompts.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+    </div>
   </div>
-  <div class="files" id="fl-entities"></div>
-</div>
 
-<!-- UPLOAD 3: Corpus -->
-<div class="card">
-  <h2>3. Ground-Truth Corpus <span class="pill p-yellow">Optional</span></h2>
-  <p class="sub">Documentation dumps, authority URLs, gold standard response set.</p>
-  <div class="dropzone" id="dz-corpus" data-s="corpus">
-    <div class="ico" style="font-size:1.1em;font-weight:700;color:var(--green)">+</div><div class="ttl">Drop corpus files (JSON/TXT/MD)</div>
-    <div class="hint">Your docs, authority URLs, ideal response set</div>
-    <input type="file" accept=".json,.txt,.md,.csv" multiple>
+  <div class="section-label">4 &middot; Geographic Proxy &amp; Localization Injection</div>
+  <div class="card">
+    <h2>Simulate Real Enterprise Buyer Locations <span class="pill p-blue">New</span></h2>
+    <p class="sub">A CISO in London gets different citations than one in Austin. Rotate residential proxies across hyper-specific enterprise markets so retrieval results match the buyer's actual geography.</p>
+    <div class="toggle-row">
+      <div>
+        <div class="tlabel">Enable Geographic Localization</div>
+        <div class="tdesc">Route queries through market-specific proxy points</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="geo-enabled" checked><span class="slider"></span></label>
+    </div>
+    <div id="geo-fields">
+      <div class="fg" style="margin-top:12px">
+        <label>Target Enterprise Markets</label>
+        <div class="chips">
+          <button class="chip zone active" data-market="US-NY">US-NY (New York)</button>
+          <button class="chip zone" data-market="US-SFO">US-SFO (SF Bay)</button>
+          <button class="chip zone active" data-market="UK-LND">UK-LND (London)</button>
+          <button class="chip zone" data-market="EU-FRA">EU-FRA (Frankfurt)</button>
+          <button class="chip zone active" data-market="APAC-SGP">APAC-SGP (Singapore)</button>
+          <button class="chip zone" data-market="APAC-SYD">APAC-SYD (Sydney)</button>
+          <button class="chip zone" data-market="ME-DXB">ME-DXB (Dubai)</button>
+        </div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Pick the markets where you actually sell to enterprise buyers. <span class="tool">Tools:</span> pull from your CRM (Salesforce/HubSpot) "account by region" report, or <b>GA4</b> (Admin → Audience → Location) to see where high-value sessions originate.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="cols3" style="margin-top:12px">
+        <div class="fg">
+          <label>Proxy Provider</label>
+          <select id="geo-proxy-type">
+            <option value="residential">Residential Proxy</option>
+            <option value="isp">ISP Proxy</option>
+            <option value="datacenter">Datacenter Proxy</option>
+          </select>
+          <div class="hint-note" style="display:none"><b>What this does:</b> Residential/ISP proxies look like real consumers (datacenter IPs get filtered by Google/bot-detection). <span class="tool">Providers:</span> <b>Bright Data</b>, <b>Oxylabs</b>, <b>Smartproxy</b>, <b>IPRoyal</b>. Residential is required for realistic geo-localized retrieval.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Proxy Server / Endpoint</label>
+          <input type="text" id="geo-proxy-server" placeholder="residential-proxy.example.com:24000">
+          <div class="hint-note" style="display:none"><b>Where to find:</b> From your proxy dashboard's "Proxy Access" page. Format: <code>host:port</code>. <span class="tool">Example:</span> Bright Data shows <code>brd.superproxy.io:22225</code>. Leave the port so the orchestrator can rotate IPs.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Rotation Interval (min)</label>
+          <input type="number" id="geo-rotation" min="1" max="1440" value="5">
+          <div class="hint-note" style="display:none"><b>What this does:</b> How often to request a new IP from the proxy pool. <span class="tool">Tip:</span> 5 min for normal runs; use 1-2 min for large batches to avoid rate limits. Rotating per-market gives each market a clean IP.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+      </div>
+      <div class="cols2" style="margin-top:4px">
+        <div class="fg">
+          <label>Proxy Username</label>
+          <input type="text" id="geo-proxy-user" placeholder="username">
+          <div class="hint-note" style="display:none"><b>Where to find:</b> Username from your proxy dashboard — often includes country/region session params, e.g. <code>lum-customer-ACME-zone-resi-country-us</code>. <span class="tool">Provider:</span> Bright Data / Oxylabs / Smartproxy dashboards.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+        <div class="fg">
+          <label>Proxy Password</label>
+          <input type="password" id="geo-proxy-pass" placeholder="••••••••">
+          <div class="hint-note" style="display:none"><b>Security note:</b> Stored only in your local <code>data/system_inputs.json</code> (never sent to any third party). <span class="tool">Tool:</span> your proxy provider's password/key.</div>
+          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="files" id="fl-corpus"></div>
-</div>
 
-<!-- UPLOAD 4: System Config -->
-<div class="card">
-  <h2>4. System Config <span class="pill p-blue">Optional</span></h2>
-  <p class="sub">Model routing, API configs, temperature/decoding settings, retrieval flags. Defaults provided.</p>
-  <div class="dropzone" id="dz-system_config" data-s="system_config">
-    <div class="ico" style="font-size:1.1em;font-weight:700;color:var(--yellow)">+</div><div class="ttl">Drop config files (JSON/YAML)</div>
-    <div class="hint">Model routing, rate limits, temperature splits</div>
-    <input type="file" accept=".json,.yaml,.yml" multiple>
+  <div class="section-label">5 &middot; LLM Providers &amp; Execution</div>
+  <div class="card">
+    <h2>Execution Parameters</h2>
+    <p class="sub">Model selection happens via API keys in <code>.env</code>. Control concurrency, budget, and query volume here.</p>
+    <div class="cols3">
+      <div class="fg">
+        <label>Prompt Count</label>
+        <input type="number" id="exec-prompt-count" min="1" max="10000" value="50">
+        <div class="hint-note" style="display:none"><b>What this does:</b> How many buyer queries to run per model. <span class="tool">Tip:</span> 50 is statistically meaningful for SoMV; use 200+ for enterprise-level confidence (95% CI ±4%). Cost scales linearly.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="fg">
+        <label>Max Concurrent Requests</label>
+        <input type="number" id="exec-concurrency" min="1" max="100" value="10">
+        <div class="hint-note" style="display:none"><b>What this does:</b> Parallel API calls. <span class="tool">Tip:</span> 10 is safe for most providers. Check your provider rate limits (OpenAI: <span class="tool">platform.openai.com/usage</span>; Anthropic: <span class="tool">console.anthropic.com</span>). Too high = 429 errors.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="fg">
+        <label>Temperature</label>
+        <input type="number" id="exec-temp" min="0" max="1" step="0.05" value="0.15">
+        <div class="hint-note" style="display:none"><b>What this does:</b> Sampling randomness. <span class="tool">Tip:</span> keep ≤0.2 for deterministic enterprise retrieval; raise to 0.7 only for persona-creativity prompts. Lower = more reproducible SoMV.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <div>
+        <div class="tlabel">Enable RAG / Web-Search Mode</div>
+        <div class="tdesc">Dual-query attribution runs prompts with web search ON and OFF to split RAG vs base-weight influence</div>
+      </div>
+      <label class="switch"><input type="checkbox" id="exec-rag" checked><span class="slider"></span></label>
+    </div>
+    <div class="hint-note" style="margin-top:8px;display:none"><b>What this does:</b> "ON" = the LLM searches the live web (captures real citations); "OFF" = base training-weight answer (captures pre-search brand memory). Running both lets the tool separate <em>retrieval-sourced</em> vs <em>memory-sourced</em> brand mentions. <span class="tool">Tip:</span> leave ON for the full analysis.</div>
+    <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
   </div>
-  <div class="files" id="fl-system_config"></div>
-</div>
 
-<!-- UPLOAD 5: Existing Results -->
-<div class="card">
-  <h2>5. Existing Simulation Results <span class="pill p-yellow">Optional</span></h2>
-  <p class="sub">Already have an <code>all_results.json</code>? Upload to skip straight to analysis.</p>
-  <div class="dropzone" id="dz-results" data-s="results">
-    <div class="ico" style="font-size:1.1em;font-weight:700;color:var(--red)">+</div><div class="ttl">Drop results JSON</div>
-    <div class="hint">Previously exported all_results.json</div>
-    <input type="file" accept=".json" multiple>
+  <div class="section-label">6 &middot; Data Files &amp; Uploads</div>
+  <div class="card">
+    <h2>Upload Your Data</h2>
+    <p class="sub">Optional uploads enrich the analysis. No uploads &rarr; auto-generated prompts and built-in config are used.</p>
+    <div class="cols2">
+      <div>
+        <div class="dropzone" id="dz-prompts" data-s="prompts">
+          <div class="ttl" style="font-weight:700;color:var(--blue)">Core Prompt Inputs</div>
+          <div class="hint">Conversation trees, persona vectors (JSON/CSV)</div>
+          <input type="file" accept=".json,.csv" multiple>
+        </div>
+        <div class="files" id="fl-prompts"></div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Export buyer conversations from your CRM chat logs, or pull real "People Also Ask" queries from <span class="tool">AlsoAsked.com</span> / <span class="tool">AnswerThePublic</span>. Format: JSON/CSV of prompt trees + buyer personas.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div>
+        <div class="dropzone" id="dz-entities" data-s="entities">
+          <div class="ttl" style="font-weight:700;color:var(--purple)">Entity Map &amp; Knowledge Base</div>
+          <div class="hint">Brand URIs, aliases, competitor matrix (JSON)</div>
+          <input type="file" accept=".json" multiple>
+        </div>
+        <div class="files" id="fl-entities"></div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> A JSON map of your brand + alias URIs and competitor matrix. <span class="tool">Tool:</span> generate from a <b>Google Knowledge Graph search</b> (<span class="tool">knowledgegraphsearch.com</span>) or use <span class="tool">Schema.org</span> entity types on your site. Defaults auto-build from your Brand field.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div>
+        <div class="dropzone" id="dz-corpus" data-s="corpus">
+          <div class="ttl" style="font-weight:700;color:var(--green)">Ground-Truth Corpus</div>
+          <div class="hint">Docs, authority URLs, gold-standard set (JSON/TXT/MD)</div>
+          <input type="file" accept=".json,.txt,.md,.csv" multiple>
+        </div>
+        <div class="files" id="fl-corpus"></div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Your own docs site, whitepapers, and the authority sources you WANT to be cited from. <span class="tool">Tools:</span> export your docs (WordPress/Notion/Hugo), plus competitor-citing sources found via <b>Backlinko</b> / <b>Ahrefs</b> "referring domains". Used for verification + missing-node detection.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div>
+        <div class="dropzone" id="dz-system_config" data-s="system_config">
+          <div class="ttl" style="font-weight:700;color:var(--yellow)">System Config</div>
+          <div class="hint">Model routing, rate limits, decoding overrides (JSON/YAML)</div>
+          <input type="file" accept=".json,.yaml,.yml" multiple>
+        </div>
+        <div class="files" id="fl-system_config"></div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Copy from <code>config/execution.json</code> + <code>config/models.json</code> in the project repo. <span class="tool">Tip:</span> edit these to override which models get called and rate limits per provider. Defaults are loaded automatically if you skip this.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div>
+        <div class="dropzone" id="dz-results" data-s="results">
+          <div class="ttl" style="font-weight:700;color:var(--red)">Existing Simulation Results</div>
+          <div class="hint">Previously exported all_results.json (skip to analysis)</div>
+          <input type="file" accept=".json" multiple>
+        </div>
+        <div class="files" id="fl-results"></div>
+        <div class="hint-note" style="display:none"><b>Where to find:</b> Any previous run's <code>all_results.json</code> (saved under <code>data/results/&lt;run-id&gt;/</code>). Uploading this lets you re-analyze a past simulation without re-spending API budget. <span class="tool">Tip:</span> great for re-running enterprise analytics after model updates.</div>
+        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      </div>
+      <div class="card" style="border:2px dashed #cbd5e1;background:#fafbfc;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:28px 20px">
+        <div style="font-size:1.4em;font-weight:700;color:var(--blue)">Ready to run?</div>
+        <p style="font-size:.78em;color:var(--text2);margin:6px 0 12px;max-width:260px">Save these system inputs, then start the full 10-stage analysis pipeline.</p>
+        <div class="bgrp" style="justify-content:center">
+          <button class="btn btn-green btn-big" id="btn-analyze" onclick="saveConfig(true)">Save &amp; Start Full Analysis</button>
+          <button class="btn btn-outline" onclick="saveConfig(false)">Save Inputs Only</button>
+        </div>
+        <p style="font-size:.7em;color:var(--text3);margin-top:8px">Requires API keys in <code>.env</code> for real LLM queries</p>
+      </div>
+    </div>
   </div>
-  <div class="files" id="fl-results"></div>
-</div>
 
-<!-- START ANALYSIS -->
-<div class="card" style="border:2px solid var(--green);background:#f0fdf4">
-  <h2>Run Analysis</h2>
-  <p class="sub">Full 8-stage pipeline: Attribution &rarr; Triples &rarr; Citation Graphs &rarr; SoMV &rarr; Embeddings &rarr; Sentiment &rarr; Dashboard &rarr; Recommendations.</p>
-  <div class="bgrp">
-    <button class="btn btn-green btn-big" id="btn-analyze" onclick="startAnalysis()">Start Full Analysis</button>
-  </div>
   <div id="run-progress" class="hidden">
-    <div class="progress"><div class="bar" id="run-bar" style="width:20%"></div></div>
-    <p style="font-size:.8em;color:var(--text2)" id="run-status-text">Starting...</p>
+    <div class="card">
+      <h2>Pipeline Progress</h2>
+      <div class="progress"><div class="bar" id="run-bar" style="width:2%"></div></div>
+      <p style="font-size:.8em;color:var(--text2)" id="run-status-text">Starting...</p>
+    </div>
   </div>
   <div id="run-log-wrap" class="hidden">
-    <p style="font-size:.78em;font-weight:600;margin-top:6px">Pipeline Output:</p>
-    <div class="log" id="run-log"></div>
+    <div class="card">
+      <h2>Pipeline Output</h2>
+      <div class="log" id="run-log"></div>
+    </div>
   </div>
+
+  <div class="section-label">Previous Runs</div>
+  <div class="card" style="margin-top:4px">
+    <h2>Previous Runs</h2>
+    <div id="runs-list"><p style="color:var(--text3);font-size:.85em">No runs yet</p></div>
+  </div>
+
 </div>
 
-<!-- Results -->
-<div id="results-area" class="hidden">
+<!-- ═══════════════ PAGE 2: RESULTS ═══════════════ -->
+<div class="page" id="page-results">
 
   <div class="reading-progress" id="reading-progress"><div class="bar" id="reading-bar"></div></div>
 
-  <div class="results-hero" id="results-hero">
-    <h1>Analysis Results</h1>
-    <p>Enterprise Generative Engine Optimization Intelligence Report</p>
-    <div class="hero-stats" id="hero-stats"></div>
-    <div style="margin-top:20px;position:relative;z-index:2">
-      <button id="btn-download-pdf" onclick="downloadPDF()" style="padding:12px 28px;font-size:.82em;border-radius:12px;background:linear-gradient(135deg,#dc2626 0%,#b91c1c 50%,#991b1b 100%);color:#fff;border:0;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;box-shadow:0 4px 20px rgba(220,38,38,.4);transition:all .25s cubic-bezier(.4,0,.2,1);letter-spacing:.02em" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 8px 30px rgba(220,38,38,.5)'" onmouseout="this.style.transform='';this.style.boxShadow='0 4px 20px rgba(220,38,38,.4)'">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        Download PDF Report
-      </button>
+  <div id="results-area" class="hidden">
+    <div class="results-hero" id="results-hero">
+      <h1>Analysis Results</h1>
+      <p>Enterprise Generative Engine Optimization Intelligence Report</p>
+      <div class="hero-stats" id="hero-stats"></div>
+      <div style="margin-top:20px;position:relative;z-index:2">
+        <button id="btn-download-pdf" onclick="downloadPDF()" style="padding:12px 28px;font-size:.82em;border-radius:12px;background:linear-gradient(135deg,#d93025 0%,#c5221f 50%,#a50e0e 100%);color:#fff;border:0;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;box-shadow:0 4px 20px rgba(217,48,37,.4);transition:all .25s;letter-spacing:.02em">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download PDF Report
+        </button>
+      </div>
     </div>
+
+    <div class="results-nav-wrap">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <nav class="results-nav" id="results-nav" style="flex:1">
+          <a href="#res-exec-summary" data-section="res-exec-summary"><span class="nav-num">1</span>Executive Summary</a>
+          <a href="#res-cmo-dashboard" data-section="res-cmo-dashboard"><span class="nav-num">★</span>CMO Dashboard</a>
+          <a href="#res-attribution" data-section="res-attribution"><span class="nav-num">2</span>Attribution</a>
+          <a href="#res-somv" data-section="res-somv"><span class="nav-num">3</span>SoMV</a>
+          <a href="#res-triples" data-section="res-triples"><span class="nav-num">4</span>Triple Extraction</a>
+          <a href="#res-graphs" data-section="res-graphs"><span class="nav-num">5</span>Citation Graphs</a>
+          <a href="#res-embeddings" data-section="res-embeddings"><span class="nav-num">6</span>Embeddings</a>
+          <a href="#res-sentiment" data-section="res-sentiment"><span class="nav-num">7</span>Sentiment</a>
+          <a href="#res-biases" data-section="res-biases"><span class="nav-num">8</span>Biases</a>
+          <a href="#res-recommendations" data-section="res-recommendations"><span class="nav-num">9</span>Recommendations</a>
+          <a href="#res-enterprise" data-section="res-enterprise"><span class="nav-num">10</span>Enterprise Intelligence</a>
+          <a href="#res-charts" data-section="res-charts"><span class="nav-num">*</span>Charts</a>
+          <a href="#res-strategic-summary" data-section="res-strategic-summary"><span class="nav-num">S</span>Strategy</a>
+        </nav>
+        <button class="btn" onclick="downloadPDF()" style="flex-shrink:0;padding:8px 16px;font-size:.72em;border-radius:10px;background:linear-gradient(135deg,#d93025,#c5221f);color:#fff;border:0;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Download PDF Report">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          PDF
+        </button>
+      </div>
+    </div>
+
+    <div id="res-exec-summary" class="hidden"></div>
+    <div id="data-quality-banner" class="hidden"></div>
+    <div id="res-cmo-dashboard" class="hidden"></div>
+    <div id="res-attribution" class="hidden"></div>
+    <div id="res-somv" class="hidden"></div>
+    <div id="res-triples" class="hidden"></div>
+    <div id="res-graphs" class="hidden"></div>
+    <div id="res-embeddings" class="hidden"></div>
+    <div id="res-sentiment" class="hidden"></div>
+    <div id="res-biases" class="hidden"></div>
+    <div id="res-recommendations" class="hidden"></div>
+    <div id="res-enterprise" class="hidden"></div>
+    <div id="res-charts" class="hidden"></div>
+    <div id="res-strategic-summary" class="hidden"></div>
   </div>
 
-  <div class="results-nav-wrap">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <nav class="results-nav" id="results-nav" style="flex:1">
-        <a href="#res-exec-summary" data-section="res-exec-summary"><span class="nav-num">1</span>Executive Summary</a>
-        <a href="#res-attribution" data-section="res-attribution"><span class="nav-num">2</span>Attribution</a>
-        <a href="#res-somv" data-section="res-somv"><span class="nav-num">3</span>SoMV</a>
-        <a href="#res-triples" data-section="res-triples"><span class="nav-num">4</span>Triple Extraction</a>
-        <a href="#res-graphs" data-section="res-graphs"><span class="nav-num">5</span>Citation Graphs</a>
-        <a href="#res-embeddings" data-section="res-embeddings"><span class="nav-num">6</span>Embeddings</a>
-        <a href="#res-sentiment" data-section="res-sentiment"><span class="nav-num">7</span>Sentiment</a>
-        <a href="#res-biases" data-section="res-biases"><span class="nav-num">8</span>Biases</a>
-        <a href="#res-recommendations" data-section="res-recommendations"><span class="nav-num">9</span>Recommendations</a>
-        <a href="#res-charts" data-section="res-charts"><span class="nav-num">*</span>Charts</a>
-        <a href="#res-strategic-summary" data-section="res-strategic-summary"><span class="nav-num">S</span>Strategy</a>
-      </nav>
-      <button class="btn btn-red" onclick="downloadPDF()" style="flex-shrink:0;padding:8px 16px;font-size:.72em;border-radius:10px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:0;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:5px;white-space:nowrap" title="Download PDF Report">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        PDF
-      </button>
-    </div>
+  <div id="res-empty" class="card" style="text-align:center;padding:48px 24px;display:block">
+    <div style="font-size:2.2em;margin-bottom:10px">&#128202;</div>
+    <h2 style="margin-bottom:6px">No Results Yet</h2>
+    <p style="font-size:.84em;color:var(--text2);max-width:420px;margin:0 auto">Run a full analysis from the <b>System Inputs</b> tab. Results from completed runs will appear here with charts, citation graphs, and prioritized recommendations.</p>
+    <button class="btn btn-blue" style="margin-top:18px" onclick="switchPage('page-inputs')">Go to System Inputs</button>
   </div>
 
-  <div style="display:none"><!-- No results PDF button needed --></div>
-
-  <div id="res-exec-summary" class="hidden"></div>
-  <div id="res-attribution" class="hidden"></div>
-  <div id="res-somv" class="hidden"></div>
-  <div id="res-triples" class="hidden"></div>
-  <div id="res-graphs" class="hidden"></div>
-  <div id="res-embeddings" class="hidden"></div>
-  <div id="res-sentiment" class="hidden"></div>
-  <div id="res-biases" class="hidden"></div>
-  <div id="res-recommendations" class="hidden"></div>
-  <div id="res-charts" class="hidden"></div>
-  <div id="res-strategic-summary" class="hidden"></div>
-</div>
-
-<button id="btn-back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top">
-  ^
-  <span class="tooltip">Back to top</span>
-</button>
-
-<!-- Previous Runs -->
-<div class="card" style="margin-top:12px">
-  <h2>Previous Runs</h2>
-  <div id="runs-list"><p style="color:var(--text3);font-size:.85em">No runs yet</p></div>
 </div>
 
 </div>
 
+<button id="btn-back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Back to top">^</button>
 <div id="toast" class="toast"></div>
 
 <script>
 function toast(m,t='in'){const e=document.getElementById('toast');e.textContent=m;e.className='toast '+t+' show';setTimeout(()=>e.classList.remove('show'),4000)}
+
+function switchPage(id){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('#nav-tabs .tab').forEach(t=>t.classList.toggle('active',t.dataset.page===id));
+  const page=document.getElementById(id);
+  if(page)page.classList.add('active');
+  window.scrollTo({top:0});
+  if(id==='page-results')updateResultsNav();
+}
 
 function toggleSection(header){
   const section=header.closest('.res-section');
@@ -635,20 +728,152 @@ function toggleSection(header){
 }
 async function api(ep,o={}){const r=await fetch(ep,{headers:{'Content-Type':'application/json'},...o});return r.json()}
 
+// ── Config form ──
+const competitors=[];
+
+function toggleHint(btn){
+  const note=btn.previousElementSibling;
+  const hidden=note.style.display==='none';
+  note.style.display=hidden?'block':'none';
+  btn.textContent=hidden?'Hide data source notes':'? How to fill this';
+}
+
+function addCompetitor(){
+  const inp=document.getElementById('inp-comp');
+  const v=inp.value.trim();
+  if(!v)return;
+  competitors.push(v);
+  inp.value='';
+  renderCompetitors();
+}
+function renderCompetitors(){
+  const el=document.getElementById('comp-list');
+  el.innerHTML=competitors.map((c,i)=>`
+    <div class="comp-row">
+      <input type="text" value="${c.replace(/"/g,'&quot;')}" onchange="updateCompetitor(${i},this.value)">
+      <button class="comp-remove" onclick="removeCompetitor(${i})">&times;</button>
+    </div>`).join('');
+}
+function updateCompetitor(i,v){competitors[i]=v.trim()}
+function removeCompetitor(i){competitors.splice(i,1);renderCompetitors()}
+
+document.querySelectorAll('.chip').forEach(ch=>{
+  ch.onclick=()=>ch.classList.toggle('active');
+});
+
+// Toggle field visibility
+['rag-enabled','temporal-enabled','geo-enabled'].forEach(id=>{
+  const inp=document.getElementById(id);
+  inp.addEventListener('change',()=>{
+    const target=id==='rag-enabled'?'rag-fields':id==='temporal-enabled'?'temporal-fields':'geo-fields';
+    document.getElementById(target).classList.toggle('field-disabled',!inp.checked);
+  });
+});
+
+function collectConfig(){
+  const markets=[...document.querySelectorAll('.chip.zone.active')].map(c=>c.dataset.market);
+  const config={
+    brand:{
+      primary_name:document.getElementById('inp-brand').value.trim(),
+      website:document.getElementById('inp-website').value.trim(),
+      category:document.getElementById('inp-category').value.trim()
+    },
+    competitors,
+    dynamic_search_context:{
+      enabled:document.getElementById('rag-enabled').checked,
+      capture_hidden_queries:document.getElementById('rag-capture-hidden').checked,
+      max_search_queries_per_prompt:parseInt(document.getElementById('rag-max-queries').value||'3',10),
+      source_priority:document.getElementById('rag-source-priority').value,
+      query_templates:document.getElementById('rag-templates').value.split('\n').map(s=>s.trim()).filter(Boolean)
+    },
+    temporal_grounding:{
+      enabled:document.getElementById('temporal-enabled').checked,
+      content_freshness_timestamp:document.getElementById('temporal-timestamp').value,
+      baseline_model_snapshot:document.getElementById('temporal-snap-a').value.trim(),
+      current_model_snapshot:document.getElementById('temporal-snap-b').value.trim(),
+      compare_mode:document.getElementById('temporal-compare-mode').value
+    },
+    geo_localization:{
+      enabled:document.getElementById('geo-enabled').checked,
+      markets,
+      proxy_type:document.getElementById('geo-proxy-type').value,
+      proxy_server:document.getElementById('geo-proxy-server').value.trim(),
+      proxy_username:document.getElementById('geo-proxy-user').value.trim(),
+      proxy_password:document.getElementById('geo-proxy-pass').value.trim(),
+      rotation_interval_min:parseInt(document.getElementById('geo-rotation').value||'5',10)
+    },
+    execution:{
+      prompt_count:parseInt(document.getElementById('exec-prompt-count').value||'50',10),
+      max_concurrent_requests:parseInt(document.getElementById('exec-concurrency').value||'10',10),
+      temperature:parseFloat(document.getElementById('exec-temp').value||'0.15'),
+      rag_enabled:document.getElementById('exec-rag').checked
+    }
+  };
+  return config;
+}
+
+async function loadConfig(){
+  try{
+    const d=await api('/api/config');
+    const c=d.config||{};
+    if(c.brand){
+      document.getElementById('inp-brand').value=c.brand.primary_name||'';
+      document.getElementById('inp-website').value=c.brand.website||'';
+      document.getElementById('inp-category').value=c.brand.category||'';
+    }
+    if(c.competitors&&c.competitors.length){competitors.push(...c.competitors);renderCompetitors()}
+    const ds=c.dynamic_search_context||{};
+    if(Object.keys(ds).length){
+      document.getElementById('rag-enabled').checked=ds.enabled!==false;
+      document.getElementById('rag-capture-hidden').checked=ds.capture_hidden_queries!==false;
+      document.getElementById('rag-max-queries').value=ds.max_search_queries_per_prompt||3;
+      if(ds.source_priority)document.getElementById('rag-source-priority').value=ds.source_priority;
+      if(ds.query_templates)document.getElementById('rag-templates').value=ds.query_templates.join('\n');
+    }
+    const tg=c.temporal_grounding||{};
+    if(Object.keys(tg).length){
+      document.getElementById('temporal-enabled').checked=tg.enabled!==false;
+      if(tg.content_freshness_timestamp)document.getElementById('temporal-timestamp').value=tg.content_freshness_timestamp;
+      if(tg.baseline_model_snapshot)document.getElementById('temporal-snap-a').value=tg.baseline_model_snapshot;
+      if(tg.current_model_snapshot)document.getElementById('temporal-snap-b').value=tg.current_model_snapshot;
+      if(tg.compare_mode)document.getElementById('temporal-compare-mode').value=tg.compare_mode;
+    }
+    const gl=c.geo_localization||{};
+    if(Object.keys(gl).length){
+      document.getElementById('geo-enabled').checked=gl.enabled!==false;
+      if(gl.markets&&gl.markets.length){
+        document.querySelectorAll('.chip.zone').forEach(ch=>ch.classList.toggle('active',gl.markets.includes(ch.dataset.market)));
+      }
+      if(gl.proxy_type)document.getElementById('geo-proxy-type').value=gl.proxy_type;
+      if(gl.proxy_server)document.getElementById('geo-proxy-server').value=gl.proxy_server;
+      if(gl.proxy_username)document.getElementById('geo-proxy-user').value=gl.proxy_username;
+      if(gl.proxy_password)document.getElementById('geo-proxy-pass').value=gl.proxy_password;
+      if(gl.rotation_interval_min)document.getElementById('geo-rotation').value=gl.rotation_interval_min;
+    }
+    const ex=c.execution||{};
+    if(Object.keys(ex).length){
+      if(ex.prompt_count)document.getElementById('exec-prompt-count').value=ex.prompt_count;
+      if(ex.max_concurrent_requests)document.getElementById('exec-concurrency').value=ex.max_concurrent_requests;
+      if(ex.temperature!=null)document.getElementById('exec-temp').value=ex.temperature;
+      if(ex.rag_enabled!=null)document.getElementById('exec-rag').checked=ex.rag_enabled;
+    }
+  }catch(e){console.warn('loadConfig failed',e)}
+}
+
+async function saveConfig(runNow){
+  const config=collectConfig();
+  const r=await api('/api/config',{method:'POST',body:JSON.stringify(config)});
+  if(!r.success){toast(r.error||'Failed to save inputs','er');return}
+  toast('System inputs saved','ok');
+  if(runNow)startAnalysis();
+}
+
 // ── Uploads ──
 async function doUpload(section,file){
   const fd=new FormData();fd.append('file',file);
   const r=await fetch('/api/upload/'+section,{method:'POST',body:fd});
   const d=await r.json();
   if(d.success){toast(file.name+' uploaded','ok');loadFiles()}else toast('Upload failed','er');
-}
-async function pasteSubmit(section,textareaId){
-  const t=document.getElementById(textareaId).value.trim();
-  if(!t){toast('Paste data first','er');return}
-  try{JSON.parse(t)}catch{toast('Invalid JSON','er');return}
-  const r=await fetch('/api/upload/'+section+'?filename=paste_'+Date.now()+'.json',{method:'POST',body:t,headers:{'Content-Type':'text/plain'}});
-  const d=await r.json();
-  if(d.success){toast('Submitted','ok');document.getElementById(textareaId).value='';loadFiles()}else toast('Failed','er');
 }
 document.querySelectorAll('.dropzone').forEach(dz=>{
   const s=dz.dataset.s;const inp=dz.querySelector('input');
@@ -712,7 +937,7 @@ function pollAnalysis(id){
 
     if(r.status==='completed'){
       clearInterval(pollId);
-      document.getElementById('run-status-text').innerHTML=`<strong style="color:var(--green)">Complete in ${elapsed}s</strong> &mdash; 8/8 stages`;
+      document.getElementById('run-status-text').innerHTML=`<strong style="color:var(--green)">Complete in ${elapsed}s</strong> &mdash; 10/10 stages`;
       document.getElementById('run-bar').style.width='100%';
       document.getElementById('top-status').className='status done';
       document.getElementById('top-status').textContent='Done';
@@ -720,6 +945,7 @@ function pollAnalysis(id){
       toast('Analysis complete!','ok');
       loadResults();
       loadRuns();
+      switchPage('page-results');
     }
     if(r.status==='failed'){
       clearInterval(pollId);
@@ -733,158 +959,132 @@ function pollAnalysis(id){
   },1500);
 }
 
-async function generateAndAnalyze(){
-  const st=document.getElementById('quick-status-text');
-  const pg=document.getElementById('quick-progress');
-  st.textContent='Generating sample data...';
-  pg.classList.remove('hidden');
-  const r=await api('/api/sample',{method:'POST'});
-  if(!r.success){st.textContent='Failed: '+(r.error||'');pg.classList.add('hidden');toast('Generation failed','er');return}
-  st.textContent='Sample ready! Starting analysis...';
-  pg.classList.add('hidden');
-  toast('Sample data generated','ok');
-  setTimeout(()=>startAnalysis(),300);
-}
-
 // ── Results ──
 function fmt(n){return n==null?'-':typeof n==='number'?n.toLocaleString():n}
 function pct(n){return n==null?'-':(n*100).toFixed(1)+'%'}
 function tag(text,cls){return`<span class="res-tag ${cls}">${text}</span>`}
 function insight(text,cls){return`<div class="res-insight${cls?' '+cls:''}">${text}</div>`}
 
-let counterAnimated = false;
+let counterAnimated=false;
 function animateCounters(){
-  if(counterAnimated) return;
+  if(counterAnimated)return;
   document.querySelectorAll('.res-kpi .val').forEach(el=>{
-    const text = el.textContent.trim();
-    const cleaned = text.replace(/[,%]/g, '');
-    const target = parseFloat(cleaned);
-    if(isNaN(target) || target === 0) return;
-    const suffix = text.includes('%') ? '%' : '';
-    const prefix = text.startsWith('#') ? '#' : '';
-    const isCurrency = text.includes('$');
-    const valStr = cleaned.replace(/[^0-9.-]/g, '');
-    const numTarget = parseFloat(valStr) || target;
-    const decimals = (text.includes('.') && !text.includes('%')) ? 1 : 0;
-    const duration = 1000;
-    const start = performance.now();
-    const origText = el.textContent;
+    const text=el.textContent.trim();
+    const cleaned=text.replace(/[,%]/g,'');
+    const target=parseFloat(cleaned);
+    if(isNaN(target)||target===0)return;
+    const suffix=text.includes('%')?'%':'';
+    const prefix=text.startsWith('#')?'#':'';
+    const isCurrency=text.includes('$');
+    const valStr=cleaned.replace(/[^0-9.-]/g,'');
+    const numTarget=parseFloat(valStr)||target;
+    const duration=1000;
+    const start=performance.now();
+    const origText=el.textContent;
     function step(now){
-      const progress = Math.min((now-start)/duration, 1);
-      const eased = 1 - Math.pow(1-progress, 3);
-      const current = eased * numTarget;
-      if(isCurrency){
-        el.textContent = '$' + current.toFixed(0);
-      } else if(suffix === '%'){
-        el.textContent = current.toFixed(1) + '%';
-      } else if(decimals > 0){
-        el.textContent = prefix + Math.round(current).toLocaleString();
-      } else {
-        el.textContent = prefix + Math.round(current).toLocaleString();
-      }
-      if(progress < 1) requestAnimationFrame(step);
-      else el.textContent = origText;
+      const progress=Math.min((now-start)/duration,1);
+      const eased=1-Math.pow(1-progress,3);
+      const current=eased*numTarget;
+      if(isCurrency){el.textContent='$'+current.toFixed(0);}
+      else if(suffix==='%'){el.textContent=current.toFixed(1)+'%';}
+      else{el.textContent=prefix+Math.round(current).toLocaleString();}
+      if(progress<1)requestAnimationFrame(step);
+      else el.textContent=origText;
     }
     requestAnimationFrame(step);
   });
-  counterAnimated = true;
+  counterAnimated=true;
 }
 
-const SECTION_IDS = ['res-exec-summary','res-attribution','res-somv','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-charts','res-strategic-summary'];
+const SECTION_IDS=['res-exec-summary','res-cmo-dashboard','res-attribution','res-somv','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-enterprise','res-charts','res-strategic-summary'];
 
 function updateResultsNav(){
-  const navLinks = document.querySelectorAll('.results-nav a');
-  if(!navLinks.length) return;
-  const scrollY = window.scrollY + 160;
-  let activeId = '';
-  SECTION_IDS.forEach(id => {
-    const el = document.getElementById(id);
-    if(el && !el.classList.contains('hidden') && el.offsetTop <= scrollY) activeId = id;
+  const navLinks=document.querySelectorAll('.results-nav a');
+  if(!navLinks.length)return;
+  const scrollY=window.scrollY+160;
+  let activeId='';
+  SECTION_IDS.forEach(id=>{
+    const el=document.getElementById(id);
+    if(el&&!el.classList.contains('hidden')&&el.offsetTop<=scrollY)activeId=id;
   });
-  navLinks.forEach(link => {
-    link.classList.toggle('active', link.dataset.section === activeId);
-  });
-
-  // Reading progress
-  const rp = document.getElementById('reading-bar');
+  navLinks.forEach(link=>{link.classList.toggle('active',link.dataset.section===activeId)});
+  const rp=document.getElementById('reading-bar');
   if(rp){
-    const docH = document.documentElement.scrollHeight - window.innerHeight;
-    const scrolled = window.scrollY;
-    rp.style.width = docH > 0 ? Math.min(100, (scrolled / docH) * 100) + '%' : '0%';
+    const docH=document.documentElement.scrollHeight-window.innerHeight;
+    const scrolled=window.scrollY;
+    rp.style.width=docH>0?Math.min(100,(scrolled/docH)*100)+'%':'0%';
   }
-
-  // Back to top visibility
-  const btt = document.getElementById('btn-back-top');
-  if(btt) btt.classList.toggle('visible', window.scrollY > 400);
+  const btt=document.getElementById('btn-back-top');
+  if(btt)btt.classList.toggle('visible',window.scrollY>400);
 }
 
-// IntersectionObserver for section reveal accent + counter trigger
-let observerInited = false;
+let observerInited=false;
 function initSectionObserver(){
-  if(observerInited) return;
-  observerInited = true;
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
+  if(observerInited)return;
+  observerInited=true;
+  const observer=new IntersectionObserver((entries)=>{
+    entries.forEach(entry=>{
       if(entry.isIntersecting){
         entry.target.classList.add('visible');
-        // Trigger counter animation when first section comes into view
-        if(!counterAnimated) animateCounters();
+        if(!counterAnimated)animateCounters();
         observer.unobserve(entry.target);
       }
     });
-  }, { threshold: 0.15, rootMargin: '0px 0px -50px 0px' });
-  document.querySelectorAll('#results-area .res-section').forEach(el => observer.observe(el));
+  },{threshold:0.15,rootMargin:'0px 0px -50px 0px'});
+  document.querySelectorAll('#results-area .res-section').forEach(el=>observer.observe(el));
 }
 
-function populateHeroStats(s, dataSource){
-  const el = document.getElementById('hero-stats');
-  if(!el || !s) return;
-  const ts = s.triple_stats || {};
-  const sm = s.somv || {};
-  const overall = sm.overall || {};
-  const bs = overall.brand_stats || {};
-  const brandA = bs['Brand_A'] || {};
-  const recs = s.recommendations || [];
-
-  const somvPct = brandA.share_of_voice ? (brandA.share_of_voice*100).toFixed(1) : '0';
-  const sourceLabel = dataSource?.hasUploads ? 'Data from uploaded files' : 'Synthetic sample data';
-  const sourceColor = dataSource?.hasUploads ? '#16a34a' : '#ca8a04';
-  el.innerHTML = `
-    <div><span class="hero-badge" style="background:${sourceColor}22;color:${sourceColor};border:1px solid ${sourceColor}44">${sourceLabel}</span></div>
+function populateHeroStats(s,dataSource){
+  const el=document.getElementById('hero-stats');
+  if(!el||!s)return;
+  const ts=s.triple_stats||{};
+  const sm=s.somv||{};
+  const overall=sm.overall||{};
+  const bs=overall.brand_stats||{};
+  const primaryBrand=Object.keys(bs)[0]||'Your Brand';
+  const brandA=bs[primaryBrand]||{};
+  const recs=s.recommendations||[];
+  const dq=s.data_quality||{};
+  const somvPct=brandA.share_of_voice?(brandA.share_of_voice*100).toFixed(1):'0';
+  const sourceLabel=dataSource?.hasUploads?'Data from uploaded files':'Real LLM Data (Orchestrator)';
+  el.innerHTML=`
+    <div><span class="hero-badge" style="background:#16a34a22;color:#16a34a;border:1px solid #16a34a44">${sourceLabel}</span></div>
     <div class="hero-stat"><div class="num">${fmt(s.total_records||0)}</div><div class="label">Records Analyzed</div></div>
-    <div class="hero-stat"><div class="num">${s.attribution_stats?.unique_models||0}</div><div class="label">LLM Models</div></div>
+    <div class="hero-stat"><div class="num">${dq.citation_count??s.attribution_stats?.total_responses??0}</div><div class="label">Citations Found</div></div>
+    <div class="hero-stat"><div class="num">${s.attribution_stats?.unique_models||dq.unique_models?.length||0}</div><div class="label">LLM Models</div></div>
     <div class="hero-stat"><div class="num">${somvPct}%</div><div class="label">Brand SoMV</div></div>
-    <div class="hero-stat"><div class="num">${fmt(ts.total_triples_extracted||0)}</div><div class="label">Triples</div></div>
-    <div class="hero-stat"><div class="num">${recs.length}</div><div class="label">Actions</div></div>
-  `;
+    <div class="hero-stat"><div class="num">${dq.coverage_score??0}/100</div><div class="label">Data Coverage</div></div>
+    <div class="hero-stat"><div class="num">${recs.length}</div><div class="label">Actions</div></div>`;
+  renderDataQuality(s);
 }
 
 async function loadResults(){
   const d=await api('/api/results');
-  if(!d.hasData){document.getElementById('results-area').classList.add('hidden');return}
+  if(!d.hasData){
+    document.getElementById('results-area').classList.add('hidden');
+    document.getElementById('res-empty').style.display='block';
+    return;
+  }
   document.getElementById('results-area').classList.remove('hidden');
-
-  const pdfDate=document.getElementById('pdf-date');
-  if(pdfDate) pdfDate.textContent=new Date().toLocaleString();
-
+  document.getElementById('res-empty').style.display='none';
   if(!d.summary)return;
   const s=d.summary;
   const sm=s.somv||{};
   const sent=s.sentiment_matrix||{};
-
-  populateHeroStats(s, d.dataSource);
-
+  populateHeroStats(s,d.dataSource);
   const sections=[
-    ['res-exec-summary', ()=>renderSection1(s)],
-    ['res-attribution', ()=>renderSection2(s)],
-    ['res-somv', ()=>renderSection3(s)],
-    ['res-triples', ()=>renderSection4(s)],
-    ['res-graphs', ()=>renderSection5(s)],
-    ['res-embeddings', ()=>renderSection6(s)],
-    ['res-sentiment', ()=>renderSection7(s)],
-    ['res-biases', ()=>renderSection8(s)],
-    ['res-recommendations', ()=>renderSection9(s)],
-    ['res-strategic-summary', ()=>renderStrategicSummary(s)]
+    ['res-exec-summary',()=>renderSection1(s)],
+    ['res-cmo-dashboard',()=>renderCMODashboard(s)],
+    ['res-attribution',()=>renderSection2(s)],
+    ['res-somv',()=>renderSection3(s)],
+    ['res-triples',()=>renderSection4(s)],
+    ['res-graphs',()=>renderSection5(s)],
+    ['res-embeddings',()=>renderSection6(s)],
+    ['res-sentiment',()=>renderSection7(s)],
+    ['res-biases',()=>renderSection8(s)],
+    ['res-recommendations',()=>renderSection9(s)],
+    ['res-enterprise',()=>renderEnterprise(s)],
+    ['res-strategic-summary',()=>renderStrategicSummary(s)]
   ];
   sections.forEach(([id,fn],idx)=>{
     const el=document.getElementById(id);
@@ -892,9 +1092,7 @@ async function loadResults(){
     const html=fn();
     if(html){el.classList.remove('hidden');el.innerHTML=html;el.style.animationDelay=(idx*0.06)+'s'}
   });
-
-  renderCharts(sm, sent);
-
+  renderCharts(sm,sent);
   setTimeout(()=>{
     animateCounters();
     updateResultsNav();
@@ -905,104 +1103,83 @@ async function loadResults(){
       if(body&&body.classList.contains('res-section-body'))body.style.maxHeight='none';
     });
   },100);
-
   window.removeEventListener('scroll',updateResultsNav);
   window.addEventListener('scroll',updateResultsNav,{passive:true});
 }
 
 async function downloadPDF(){
-  const resultsArea = document.getElementById('results-area');
-  if(!resultsArea || resultsArea.classList.contains('hidden')) {
-    toast('No results to export. Run analysis first.','er');
-    return;
-  }
-
-  const overlay = document.createElement('div');
-  overlay.className = 'pdf-loading-overlay';
-  overlay.innerHTML = '<div class="spinner"></div><div style="font-size:14px;font-weight:600;color:#1e293b">Generating PDF Report...</div><div style="font-size:11px;color:#64748b;margin-top:4px">Capturing content and formatting pages</div>';
+  const resultsArea=document.getElementById('results-area');
+  if(!resultsArea||resultsArea.classList.contains('hidden')){toast('No results to export. Run analysis first.','er');return}
+  const overlay=document.createElement('div');
+  overlay.className='pdf-loading-overlay';
+  overlay.innerHTML='<div class="spinner"></div><div style="font-size:14px;font-weight:600;color:#202124">Generating PDF Report...</div><div style="font-size:11px;color:#5f6368;margin-top:4px">Capturing content and formatting pages</div>';
   document.body.appendChild(overlay);
-  await new Promise(r => setTimeout(r, 50));
-
-  const pdfBtn = document.getElementById('btn-download-pdf');
-  const pdfBtnNav = document.querySelector('.btn-red');
-  if(pdfBtn) { pdfBtn.disabled = true; pdfBtn.style.opacity = '0.6'; }
-  if(pdfBtnNav) { pdfBtnNav.disabled = true; pdfBtnNav.style.opacity = '0.6'; }
-
-  const restoreList = [];
-
-  try {
-
-    const chartImages = {};
-    const plotEls = document.querySelectorAll('.js-plotly-plot');
-    for (const el of plotEls) {
-      try {
-        const url = await Plotly.toImage(el, {format:'png', width:800, height:400, scale:2});
-        if(el.id) chartImages[el.id] = url;
-      } catch(e) { console.warn('Chart capture failed:', e); }
+  await new Promise(r=>setTimeout(r,50));
+  const pdfBtn=document.getElementById('btn-download-pdf');
+  const pdfBtnNav=document.querySelector('.results-nav-wrap .btn');
+  if(pdfBtn){pdfBtn.disabled=true;pdfBtn.style.opacity='0.6';}
+  if(pdfBtnNav){pdfBtnNav.disabled=true;pdfBtnNav.style.opacity='0.6';}
+  const restoreList=[];
+  try{
+    const chartImages={};
+    const plotEls=document.querySelectorAll('.js-plotly-plot');
+    for(const el of plotEls){
+      try{
+        const url=await Plotly.toImage(el,{format:'png',width:800,height:400,scale:2});
+        if(el.id)chartImages[el.id]=url;
+      }catch(e){console.warn('Chart capture failed:',e);}
     }
-
-    for (const el of plotEls) {
-      try {
-        const url = chartImages[el.id];
-        if (!url) continue;
-        const parent = el.parentNode;
-        const img = document.createElement('img');
-        img.src = url;
-        img.style.cssText = 'width:100%;border-radius:8px;margin:8px 0;display:block';
-        img.className = 'pdf-captured-chart';
-        el.style.display = 'none';
-        parent.insertBefore(img, el);
-        restoreList.push(() => { img.remove(); el.style.display = ''; });
-      } catch(e) {}
+    for(const el of plotEls){
+      try{
+        const url=chartImages[el.id];
+        if(!url)continue;
+        const parent=el.parentNode;
+        const img=document.createElement('img');
+        img.src=url;
+        img.style.cssText='width:100%;border-radius:8px;margin:8px 0;display:block';
+        img.className='pdf-captured-chart';
+        el.style.display='none';
+        parent.insertBefore(img,el);
+        restoreList.push(()=>{img.remove();el.style.display='';});
+      }catch(e){}
     }
-
-    const pdfStyle = document.createElement('style');
-    pdfStyle.id = 'pdf-override-styles';
-    pdfStyle.textContent = [
+    const pdfStyle=document.createElement('style');
+    pdfStyle.id='pdf-override-styles';
+    pdfStyle.textContent=[
       '.results-nav-wrap,.reading-progress,#btn-back-top,#btn-download-pdf,.results-hero button,.landing-hero,.info-grid{display:none!important}',
       '.section-chevron,.section-complete-badge,.section-icon-wrap,.section-num{display:none!important}',
-
       'html{margin:0!important;padding:0!important}',
       'body{margin:0!important;padding:0!important;font-size:12px!important;line-height:1.65!important;background:#fff!important}',
-
-      '.res-section{opacity:1!important;transform:none!important;animation:none!important;box-shadow:none!important;border-radius:0!important;margin:0 0 14px!important;border:1px solid #d1d5db!important}',
+      '.res-section{opacity:1!important;transform:none!important;animation:none!important;box-shadow:none!important;border-radius:0!important;margin:0 0 14px!important;border:1px solid #dadce0!important}',
       '.res-section::before{display:none!important}',
-      '.res-section-header{cursor:default!important;padding:12px 16px!important;background:#f9fafb!important;border-bottom:1px solid #d1d5db!important}',
+      '.res-section-header{cursor:default!important;padding:12px 16px!important;background:#f8f9fa!important;border-bottom:1px solid #dadce0!important}',
       '.res-section-body{max-height:none!important;overflow:visible!important;display:block!important;padding:4px 16px 16px!important}',
-
       '.results-hero{border-radius:0!important;margin:0!important;padding:36px 20px 28px!important;width:100%!important;box-sizing:border-box!important}',
-      '.results-hero::before{animation:none!important;display:none!important}',
+      '.results-hero::before{display:none!important}',
       '.results-hero .hero-stats{gap:10px 24px!important}',
       '.results-hero h1{font-size:1.5em!important}',
       '.results-hero button{display:none!important}',
-
       '#results-area{padding:0!important;margin:0!important;width:100%!important;max-width:100%!important;overflow:visible!important}',
       '#results-area .reading-progress{display:none!important}',
       '.main{padding:0!important;max-width:100%!important;margin:0!important}',
-
       '.res-section h2{font-size:1.05em!important;font-weight:800!important;margin:0!important}',
       '.res-section h3{font-size:.9em!important;margin:12px 0 6px!important}',
       '.res-section h4{font-size:.82em!important;margin:8px 0 4px!important}',
-
       '.res-kpi-row{display:grid!important;grid-template-columns:repeat(3,1fr)!important;gap:6px!important;margin:8px 0 12px!important}',
       '.res-kpi{padding:10px 8px!important;min-width:0!important;border-radius:6px!important}',
       '.res-kpi .val{font-size:1.25em!important}',
       '.res-kpi .lbl{font-size:.7em!important}',
-
       '.res-table-wrap{border-radius:6px!important;overflow:hidden!important}',
       '.res-table{font-size:.78em!important;width:100%!important;border-collapse:collapse!important}',
       '.res-table th{font-size:.72em!important;padding:6px 8px!important}',
       '.res-table td{padding:5px 8px!important;font-size:.78em!important}',
-
       '.res-insight{font-size:.82em!important;padding:10px 14px!important;margin:6px 0!important}',
       '.res-deep{font-size:.82em!important;padding:10px 14px!important;margin:8px 0!important}',
       '.res-business-impact{padding:14px 16px!important;margin:10px 0!important}',
       '.res-impl-guide{padding:14px 16px!important;margin:10px 0!important}',
       '.res-quote{font-size:.8em!important;padding:6px 12px!important;margin:6px 0!important}',
-
       '.res-grid2{display:grid!important;grid-template-columns:1fr 1fr!important;gap:10px!important}',
       '.res-grid3{display:grid!important;grid-template-columns:1fr 1fr 1fr!important;gap:10px!important}',
-
       'img.pdf-captured-chart{max-width:100%!important;height:auto!important;display:block!important;border-radius:4px!important}',
       'img{max-width:100%!important;height:auto!important}',
       '.js-plotly-plot{display:none!important}',
@@ -1013,87 +1190,67 @@ async function downloadPDF(){
       '.topbar,.card,.bgrp,.section-label,.toast,#run-progress,#run-log-wrap,#quick-progress{display:none!important}'
     ].join('\n');
     document.head.appendChild(pdfStyle);
-    restoreList.push(() => pdfStyle.remove());
-
-    const origMW = resultsArea.style.maxWidth;
-    const origOW = resultsArea.style.overflow;
-    resultsArea.style.maxWidth = '100%';
-    resultsArea.style.overflow = 'visible';
-    restoreList.push(() => { resultsArea.style.maxWidth = origMW; resultsArea.style.overflow = origOW; });
-
+    restoreList.push(()=>pdfStyle.remove());
+    const origMW=resultsArea.style.maxWidth;
+    const origOW=resultsArea.style.overflow;
+    resultsArea.style.maxWidth='100%';
+    resultsArea.style.overflow='visible';
+    restoreList.push(()=>{resultsArea.style.maxWidth=origMW;resultsArea.style.overflow=origOW;});
     resultsArea.offsetHeight;
-    await new Promise(r => setTimeout(r, 200));
-
-    const opt = {
-      margin: [6, 0, 6, 0],
-      filename: 'AEO-Analysis-Report-' + new Date().toISOString().slice(0,10) + '.pdf',
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        letterRendering: true,
-        scrollY: 0,
-        scrollX: 0,
-        windowWidth: document.documentElement.scrollWidth,
-        logging: false,
-        backgroundColor: '#ffffff',
-        allowTaint: true
-      },
-      jsPDF: {
-        unit: 'mm',
-        format: 'a4',
-        orientation: 'portrait',
-        compress: true
-      },
-      pagebreak: {
-        mode: ['css'],
-        avoid: ['.res-kpi', '.res-table-wrap', '.res-insight', '.res-deep', '.res-business-impact', '.res-impl-guide', '.res-quote', 'tr']
-      }
+    await new Promise(r=>setTimeout(r,200));
+    const opt={
+      margin:[6,0,6,0],
+      filename:'AEO-Analysis-Report-'+new Date().toISOString().slice(0,10)+'.pdf',
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,letterRendering:true,scrollY:0,scrollX:0,windowWidth:document.documentElement.scrollWidth,logging:false,backgroundColor:'#ffffff',allowTaint:true},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait',compress:true},
+      pagebreak:{mode:['css'],avoid:['.res-kpi','.res-table-wrap','.res-insight','.res-deep','.res-business-impact','.res-impl-guide','.res-quote','tr']}
     };
-
     await html2pdf().set(opt).from(resultsArea).save();
     toast('PDF downloaded successfully!','ok');
-
-  } catch(err) {
-    console.error('PDF generation error:', err);
-    toast('PDF generation failed: ' + (err.message || 'unknown error'),'er');
-  } finally {
-    restoreList.forEach(fn => { try { fn(); } catch(e) {} });
-    if(overlay.parentNode) overlay.remove();
-    if(pdfBtn) { pdfBtn.disabled = false; pdfBtn.style.opacity = ''; }
-    if(pdfBtnNav) { pdfBtnNav.disabled = false; pdfBtnNav.style.opacity = ''; }
+  }catch(err){
+    console.error('PDF generation error:',err);
+    toast('PDF generation failed: '+(err.message||'unknown error'),'er');
+  }finally{
+    restoreList.forEach(fn=>{try{fn();}catch(e){}});
+    if(overlay.parentNode)overlay.remove();
+    if(pdfBtn){pdfBtn.disabled=false;pdfBtn.style.opacity='';}
+    if(pdfBtnNav){pdfBtnNav.disabled=false;pdfBtnNav.style.opacity='';}
   }
 }
 
-function renderCharts(sm, sentiment){
+function renderCharts(sm,sentiment){
   const chartsEl=document.getElementById('res-charts');
   const byModel=sm.by_model||{};
   const brandSent=sentiment.brand_sentiment_matrix||{};
-  if(!Object.keys(byModel).length && !Object.keys(brandSent).length){chartsEl.classList.add('hidden');return}
+  if(!Object.keys(byModel).length&&!Object.keys(brandSent).length){chartsEl.classList.add('hidden');return}
   chartsEl.classList.remove('hidden');
   let h='<div class="res-section"><div class="res-section-header open" onclick="toggleSection(this)"><span class="section-chevron">&#9660;</span><div class="section-title-group"><div class="section-title-row"><span class="section-num">*</span><h2>Visual Analytics</h2><span class="section-complete-badge">Complete</span></div><p class="section-desc">Interactive Plotly charts for SoMV and sentiment distribution across all analyzed LLM models.</p></div></div><div class="res-section-body"><div class="res-grid2">';
-  h+='<div class="res-table-wrap" style="padding:12px;background:#f8fafc"><div id="chart-somv" style="height:380px"></div></div>';
-  h+='<div class="res-table-wrap" style="padding:12px;background:#f8fafc"><div id="chart-sentiment" style="height:380px"></div></div>';
+  h+='<div class="res-table-wrap" style="padding:12px;background:#f8f9fa"><div id="chart-somv" style="height:380px"></div></div>';
+  h+='<div class="res-table-wrap" style="padding:12px;background:#f8f9fa"><div id="chart-sentiment" style="height:380px"></div></div>';
   h+='</div></div></div>';
   chartsEl.innerHTML=h;
-
-  const colors={'Brand_A':'#16a34a','Brand_B':'#dc2626','Competitor_B':'#f59e0b','Competitor_C':'#7c3aed'};
-
+  const palette=['#188038','#d93025','#e37400','#7c3aed','#1a73e8','#d01884','#65a30d','#ea580c'];
+  const colors={};
+  let ci=0;
+  const allBrandsSet=new Set();
+  if(Object.keys(byModel).length){Object.values(byModel).forEach(d=>Object.keys(d.brand_stats||{}).forEach(b=>allBrandsSet.add(b)));}
+  if(Object.keys(brandSent).length){Object.keys(brandSent).forEach(b=>allBrandsSet.add(b));}
+  [...allBrandsSet].sort().forEach(b=>{colors[b]=palette[ci++%palette.length];});
   if(Object.keys(byModel).length){
     const models=Object.keys(byModel);
     const allBrands=new Set();
     Object.values(byModel).forEach(d=>Object.keys(d.brand_stats||{}).forEach(b=>allBrands.add(b)));
-    const traces=[...allBrands].sort().map(brand=>({x:models,y:models.map(m=>((byModel[m].brand_stats||{})[brand]||{}).share_of_voice||0),name:brand,type:'bar',marker:{color:colors[brand]||'#94a3b8',line:{width:0},opacity:.9}}));
-    Plotly.newPlot('chart-somv',traces,{title:{text:'Share of Voice by Model',font:{family:'Inter',size:14,weight:700}},barmode:'group',yaxis:{title:'Share of Voice',tickformat:'.0%',gridcolor:'#f1f5f9'},xaxis:{gridcolor:'#f1f5f9'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',font:{family:'Inter',size:11,color:'#64748b'},legend:{orientation:'h',y:-0.2,font:{size:10}},margin:{t:40,b:60,l:50,r:20},hoverlabel:{bgcolor:'#1e293b',font:{color:'#fff',family:'Inter',size:12}}},{responsive:true,displayModeBar:false});
+    const traces=[...allBrands].sort().map(brand=>({x:models,y:models.map(m=>((byModel[m].brand_stats||{})[brand]||{}).share_of_voice||0),name:brand,type:'bar',marker:{color:colors[brand]||'#9aa0a6',line:{width:0},opacity:.9}}));
+    Plotly.newPlot('chart-somv',traces,{title:{text:'Share of Voice by Model',font:{family:'Google Sans',size:14,weight:700}},barmode:'group',yaxis:{title:'Share of Voice',tickformat:'.0%',gridcolor:'#f1f3f4'},xaxis:{gridcolor:'#f1f3f4'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',font:{family:'Google Sans',size:11,color:'#5f6368'},legend:{orientation:'h',y:-0.2,font:{size:10}},margin:{t:40,b:60,l:50,r:20},hoverlabel:{bgcolor:'#202124',font:{color:'#fff',family:'Google Sans',size:12}}},{responsive:true,displayModeBar:false});
   }
-
   if(Object.keys(brandSent).length){
     const brands=Object.keys(brandSent);
     Plotly.newPlot('chart-sentiment',[
-      {x:brands,y:brands.map(b=>(brandSent[b].positive_rate||0)*100),name:'Positive',type:'bar',marker:{color:'#16a34a',opacity:.9}},
-      {x:brands,y:brands.map(b=>(brandSent[b].negative_rate||0)*100),name:'Negative',type:'bar',marker:{color:'#dc2626',opacity:.9}},
-      {x:brands,y:brands.map(b=>(brandSent[b].neutral_rate||0)*100),name:'Neutral',type:'bar',marker:{color:'#94a3b8',opacity:.9}}
-    ],{title:{text:'Sentiment Distribution by Brand',font:{family:'Inter',size:14,weight:700}},barmode:'stack',yaxis:{title:'Percentage',tickformat:'.0f',gridcolor:'#f1f5f9'},xaxis:{gridcolor:'#f1f5f9'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',font:{family:'Inter',size:11,color:'#64748b'},legend:{orientation:'h',y:-0.2,font:{size:10}},margin:{t:40,b:60,l:50,r:20},hoverlabel:{bgcolor:'#1e293b',font:{color:'#fff',family:'Inter',size:12}}},{responsive:true,displayModeBar:false});
+      {x:brands,y:brands.map(b=>(brandSent[b].positive_rate||0)*100),name:'Positive',type:'bar',marker:{color:'#188038',opacity:.9}},
+      {x:brands,y:brands.map(b=>(brandSent[b].negative_rate||0)*100),name:'Negative',type:'bar',marker:{color:'#d93025',opacity:.9}},
+      {x:brands,y:brands.map(b=>(brandSent[b].neutral_rate||0)*100),name:'Neutral',type:'bar',marker:{color:'#9aa0a6',opacity:.9}}
+    ],{title:{text:'Sentiment Distribution by Brand',font:{family:'Google Sans',size:14,weight:700}},barmode:'stack',yaxis:{title:'Percentage',tickformat:'.0f',gridcolor:'#f1f3f4'},xaxis:{gridcolor:'#f1f3f4'},paper_bgcolor:'transparent',plot_bgcolor:'transparent',font:{family:'Google Sans',size:11,color:'#5f6368'},legend:{orientation:'h',y:-0.2,font:{size:10}},margin:{t:40,b:60,l:50,r:20},hoverlabel:{bgcolor:'#202124',font:{color:'#fff',family:'Google Sans',size:12}}},{responsive:true,displayModeBar:false});
   }
 }
 
@@ -1104,7 +1261,7 @@ async function loadRuns(){
   if(!d.runs||!d.runs.length){el.innerHTML='<p style="color:var(--text3);font-size:.85em">No runs yet</p>';return}
   el.innerHTML=d.runs.map(r=>{
     const dt=new Date(r.time).toLocaleString();
-    return`<div class="fitem" style="padding:8px 12px">
+    return`<div class="fitem" style="padding:9px 12px">
       <span style="font-size:.85em;font-weight:700;color:${r.hasAnalysis?'var(--green)':'var(--text3)'}">[${r.hasAnalysis?'OK':'--'}]</span>
       <div style="flex:1"><strong>${r.name}</strong><br><span style="font-size:.72em;color:var(--text3)">${dt}</span></div>
       ${r.hasAnalysis?'<span class="pill p-green">Analyzed</span>':r.hasResults?'<span class="pill p-yellow">Ready</span>':''}
@@ -1113,7 +1270,14 @@ async function loadRuns(){
 }
 
 // ── Init ──
-loadFiles();loadRuns();loadResults();
+(function(){
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('temporal-timestamp').value=today;
+  loadConfig();
+  loadFiles();
+  loadRuns();
+  loadResults();
+})();
 </script>
 </body>
 </html>

@@ -11,7 +11,7 @@ Add your screenshots here:
 
 To capture screenshots:
 1. Start the server (`npm start`)
-2. Generate sample data or run analysis
+2. Run the orchestrator and start an analysis
 3. Take screenshots of each section
 4. Save them in this directory
 5. The README will reference them automatically

@@ -62,6 +62,10 @@ class DashboardGenerator:
             if citation_fig:
                 charts.append(('Citation Depth', citation_fig))
 
+            verification_fig = self._create_verification_chart(results)
+            if verification_fig:
+                charts.append(('Claim Verification (Ground Truth)', verification_fig))
+
         html = self._generate_html(results, charts)
 
         dashboard_path = dashboard_dir / 'aeo_dashboard.html'
@@ -88,13 +92,18 @@ class DashboardGenerator:
 
         fig = go.Figure()
 
-        colors = {
-            'Brand_A': '#2ecc71',
-            'Brand_B': '#e74c3c',
-            'Brand_C': '#3498db',
-            'Competitor_B': '#e67e22',
-            'Competitor_C': '#9b59b6'
-        }
+        entity_config = results.get('entity_maps', {}).get('entity_maps', {}) if isinstance(results, dict) else {}
+        primary_brand = entity_config.get('your_brand', {}).get('primary_name', '')
+
+        brand_colors = ['#2ecc71', '#e74c3c', '#3498db', '#e67e22', '#9b59b6', '#1abc9c', '#f39c12', '#9b59b6']
+        colors = {}
+        color_idx = 0
+        for brand in sorted(brands):
+            if brand == primary_brand:
+                colors[brand] = '#2ecc71'
+            else:
+                colors[brand] = brand_colors[color_idx % len(brand_colors)]
+                color_idx += 1
 
         for brand in brands:
             mention_rates = []
@@ -184,6 +193,36 @@ class DashboardGenerator:
 
         return fig
 
+    def _create_verification_chart(self, results: Dict) -> go.Figure:
+        verification = results.get('claim_verification', {})
+        overall = verification.get('overall', {})
+        if not overall or not overall.get('total_claims', 0):
+            return None
+
+        labels = ['Verified', 'Partially Verified', 'Unverified', 'Contradicted']
+        colors = ['#2ecc71', '#f1c40f', '#95a5a6', '#e74c3c']
+        values = [
+            overall.get('verified', 0),
+            overall.get('partially_verified', 0),
+            overall.get('unverified', 0),
+            overall.get('contradicted', 0)
+        ]
+
+        fig = go.Figure()
+        fig.add_trace(go.Pie(
+            labels=labels, values=values,
+            hole=0.4,
+            marker_colors=colors
+        ))
+
+        fig.update_layout(
+            title=f"Claim Verification: {overall.get('verified_rate', 0)*100:.1f}% verified against ground truth",
+            template='plotly_dark' if self.theme == 'dark' else 'plotly_white',
+            height=400
+        )
+
+        return fig
+
     def _create_turn_evolution_chart(self, results: Dict) -> go.Figure:
         sentiment = results.get('sentiment_matrix', {})
         evolution = sentiment.get('turn_sentiment_evolution', {})
@@ -198,7 +237,10 @@ class DashboardGenerator:
 
         fig = go.Figure()
 
-        colors = {'Brand_A': '#2ecc71', 'Brand_B': '#e74c3c', 'Brand_C': '#3498db'}
+        turn_brand_colors = ['#2ecc71', '#e74c3c', '#3498db', '#e67e22', '#9b59b6', '#1abc9c']
+        colors = {}
+        for idx, brand in enumerate(sorted(all_brands)):
+            colors[brand] = turn_brand_colors[idx % len(turn_brand_colors)]
 
         for brand in all_brands:
             sentiments = []
@@ -260,6 +302,7 @@ class DashboardGenerator:
         recommendations = results.get('recommendations', [])
         biases = results.get('sentiment_matrix', {}).get('detected_biases', [])
         gaps = somv.get('competitive_gaps', [])
+        primary_brand = self.config.get('entity_maps', {}).get('entity_maps', {}).get('your_brand', {}).get('primary_name', '')
 
         charts_html = ""
         for title, fig in charts:
@@ -278,7 +321,7 @@ class DashboardGenerator:
             mention = stats.get('mention_rate', 0) * 100
             omission = stats.get('omission_rate', 0) * 100
 
-            sov_class = 'positive' if brand == 'Brand_A' and sov > 30 else 'negative' if brand != 'Brand_A' and sov > 40 else ''
+            sov_class = 'positive' if brand == primary_brand and sov > 30 else 'negative' if brand != primary_brand and sov > 40 else ''
 
             brand_table_rows += f"""
             <tr class="{sov_class}">
@@ -323,6 +366,73 @@ class DashboardGenerator:
                 <p>{gap.get('recommendation', '')}</p>
             </div>
             """
+
+        verification = results.get('claim_verification', {})
+        ver_overall = verification.get('overall', {})
+        ver_ran = verification.get('verification_ran', False)
+        ver_gt = verification.get('ground_truth', {})
+        ver_total = ver_overall.get('total_claims', 0)
+
+        verification_html = ""
+        if ver_total:
+            verified_count = ver_overall.get('verified', 0)
+            partial_count = ver_overall.get('partially_verified', 0)
+            unverified_count = ver_overall.get('unverified', 0)
+            contradicted_count = ver_overall.get('contradicted', 0)
+            verified_rate = ver_overall.get('verified_rate', 0) * 100
+            contradiction_rate = ver_overall.get('contradiction_rate', 0) * 100
+
+            verification_html += f"""
+            <div class="verification-summary">
+                <div class="ver-metric ver-ok"><strong>{verified_count}</strong><span>Verified</span></div>
+                <div class="ver-metric ver-partial"><strong>{partial_count}</strong><span>Partially Verified</span></div>
+                <div class="ver-metric ver-unverified"><strong>{unverified_count}</strong><span>Unverified</span></div>
+                <div class="ver-metric ver-bad"><strong>{contradicted_count}</strong><span>Contradicted</span></div>
+            </div>
+            <div class="ver-rates">
+                <span class="rate verified-rate">Verified rate: {verified_rate:.1f}%</span>
+                <span class="rate contradiction-rate">Contradiction rate: {contradiction_rate:.1f}%</span>
+                <span class="rate gt-passages">Ground-truth passages: {ver_gt.get('passage_count', 0)}</span>
+            </div>
+            <p class="ver-note">Every claim was checked against the ground-truth corpus below. Claims marked
+            <span class="ver-badge ver-badge-verified">verified</span> are supported by authoritative sources;
+            <span class="ver-badge ver-badge-contradicted">contradicted</span> claims conflict with ground truth and are
+            the highest-priority reputational risks.</p>
+            """
+
+            contradicted_list = verification.get('contradicted_claims', [])
+            if contradicted_list:
+                verification_html += '<h3>Contradicted Claims (High Risk)</h3><div class="ver-contradictions">'
+                for item in contradicted_list[:10]:
+                    verification_html += f"""
+                    <div class="contradiction-item">
+                        <p class="claim">"{item.get('claim', '')}" <em>vs</em> "{item.get('evidence', '')}"</p>
+                        <p class="meta">Model: {item.get('model_id', 'unknown')} | Source: {item.get('evidence_source', 'n/a')}</p>
+                    </div>
+                    """
+                verification_html += '</div>'
+        else:
+            verification_html = f"""
+            <div class="ver-note ver-warning">
+                <strong>Ground-truth verification unavailable.</strong> {verification.get('message', 'No claims to verify.')}
+            </div>
+            """
+
+        gt_sources_html = ""
+        if ver_gt.get('sources'):
+            gt_sources_html = '<h3>Ground-Truth Corpus</h3><ul class="gt-sources">'
+            for source in ver_gt['sources'][:20]:
+                gt_sources_html += f'<li>{source}</li>'
+            gt_sources_html += '</ul>'
+
+        verification_html += f"""
+        <div class="ver-provenance">
+            <p><strong>Provenance:</strong> All claims, citations, and extracted entities in this report trace back to
+            verified API responses (see raw_responses/ and run_manifest.json in the run directory).
+            {ver_ran if ver_ran else 'Verification could not be run against a ground-truth corpus; upload gold standards to enable it.'}</p>
+        </div>
+        {gt_sources_html}
+        """
 
         total_records = results.get('total_records_analyzed', results.get('total_records', 0))
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -554,6 +664,108 @@ class DashboardGenerator:
             color: var(--text-secondary);
         }}
 
+        .verification-summary {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 15px;
+        }}
+
+        .ver-metric {{
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            border-left: 4px solid var(--accent-blue);
+        }}
+
+        .ver-metric.ver-ok {{ border-left-color: var(--accent-green); }}
+        .ver-metric.ver-partial {{ border-left-color: var(--accent-yellow); }}
+        .ver-metric.ver-unverified {{ border-left-color: var(--text-secondary); }}
+        .ver-metric.ver-bad {{ border-left-color: var(--accent-red); }}
+
+        .ver-metric strong {{
+            display: block;
+            font-size: 1.6em;
+        }}
+
+        .ver-metric span {{
+            color: var(--text-secondary);
+            font-size: 0.85em;
+        }}
+
+        .ver-rates {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 15px;
+        }}
+
+        .rate {{
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.9em;
+        }}
+
+        .verified-rate {{ border-left: 3px solid var(--accent-green); }}
+        .contradiction-rate {{ border-left: 3px solid var(--accent-red); }}
+        .gt-passages {{ border-left: 3px solid var(--accent-blue); }}
+
+        .ver-note {{
+            margin: 10px 0;
+            font-size: 0.92em;
+            color: var(--text-secondary);
+        }}
+
+        .ver-note.ver-warning {{
+            border-left: 3px solid var(--accent-yellow);
+            padding: 10px;
+            background: var(--bg-secondary);
+        }}
+
+        .ver-badge {{
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }}
+
+        .ver-badge-verified {{ background: var(--accent-green); color: #fff; }}
+        .ver-badge-contradicted {{ background: var(--accent-red); color: #fff; }}
+
+        .ver-contradictions .contradiction-item {{
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-left: 3px solid var(--accent-red);
+        }}
+
+        .contradiction-item .claim {{ font-size: 0.92em; }}
+        .contradiction-item .meta {{ color: var(--text-secondary); font-size: 0.85em; margin-top: 4px; }}
+
+        .gt-sources {{
+            list-style: none;
+            margin-top: 10px;
+            font-size: 0.88em;
+            color: var(--text-secondary);
+        }}
+
+        .gt-sources li {{
+            padding: 4px 0;
+            border-bottom: 1px dashed var(--border);
+            font-family: monospace;
+        }}
+
+        .ver-provenance {{
+            margin-top: 15px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-purple);
+            font-size: 0.9em;
+        }}
+
         footer {{
             text-align: center;
             padding: 20px;
@@ -596,6 +808,14 @@ class DashboardGenerator:
                 <div class="value">{len(gaps)}</div>
                 <div class="label">Competitive Gaps</div>
             </div>
+            <div class="stat-card">
+                <div class="value">{ver_overall.get('contradicted', 0)}</div>
+                <div class="label">Contradicted Claims</div>
+            </div>
+            <div class="stat-card">
+                <div class="value">{ver_overall.get('verified_rate', 0)*100:.1f}%</div>
+                <div class="label">Claim Veracity</div>
+            </div>
         </div>
 
         {charts_html}
@@ -629,12 +849,17 @@ class DashboardGenerator:
         </div>
 
         <div class="section">
+            <h2>Data Integrity & Claim Verification</h2>
+            {verification_html}
+        </div>
+
+        <div class="section">
             <h2>Competitive Gaps</h2>
             {gap_html if gap_html else '<p style="color: var(--text-secondary)">No significant competitive gaps identified.</p>'}
         </div>
 
         <footer>
-            <p>AEO & LLM Citation Graph Simulator v1.0 | Replaces $15,000-$25,000/month manual AEO agency retainers</p>
+            <p>AEO & LLM Citation Graph Simulator v2.0 | Verified, provenance-tracked LLM data with ground-truth claim verification</p>
         </footer>
     </div>
 </body>

@@ -22,6 +22,8 @@ export class GoogleProvider {
       }
     }
 
+    const tools = search_enabled ? [{ googleSearch: {} }] : [];
+
     const genModel = this.genAI.getGenerativeModel({
       model,
       systemInstruction: systemInstruction || undefined,
@@ -29,7 +31,8 @@ export class GoogleProvider {
         temperature,
         maxOutputTokens: max_tokens,
         topP: top_p
-      }
+      },
+      tools: tools.length ? tools : undefined
     });
 
     const lastUserMessage = contents.filter(c => c.role === 'user').pop();

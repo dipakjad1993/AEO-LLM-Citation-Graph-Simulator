@@ -41,7 +41,7 @@ export class PerplexityProvider {
       finish_reason: choice?.finish_reason,
       citations,
       related_questions: data.related_questions || [],
-      search_performed: true,
+      search_performed: Boolean(search_enabled),
       raw_response: data
     };
   }

@@ -15,15 +15,15 @@ from collections import Counter, defaultdict
 import polars as pl
 import numpy as np
 
+from brand_utils import build_brand_patterns
+
 logger = logging.getLogger(__name__)
 
-BRAND_PATTERNS = {
-    'Brand_A': r'\bBrand[_ -]?A\b',
-    'Brand_B': r'\bBrand[_ -]?B\b',
-    'Brand_C': r'\bBrand[_ -]?C\b',
-    'Competitor_B': r'\bCompetitor[_ -]?B\b',
-    'Competitor_C': r'\bCompetitor[_ -]?C\b',
-}
+try:
+    from transformers import pipeline
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
 
 
 class SentimentMatrix:
@@ -32,6 +32,8 @@ class SentimentMatrix:
         self.sentiment_config = config.get('analytics', {}).get('sentiment', {})
         self.positive_threshold = self.sentiment_config.get('positive_threshold', 0.6)
         self.negative_threshold = self.sentiment_config.get('negative_threshold', 0.4)
+        self.entity_config = config.get('entity_maps', {}).get('entity_maps', {})
+        self.brand_patterns = build_brand_patterns(self.entity_config)
 
         self.bias_patterns = {
             'manual_migration': r'manual\s+(database\s+)?migration',
@@ -58,6 +60,21 @@ class SentimentMatrix:
         }
         self.negation_words = {'not', "n't", 'no', 'never', 'without', 'neither', 'nor'}
 
+        self._classifier = None
+        self.sentiment_engine = 'keyword'
+        if TRANSFORMERS_AVAILABLE and self.sentiment_config.get('use_transformer', True):
+            model_name = self.sentiment_config.get('model', 'cardiffnlp/twitter-roberta-base-sentiment-latest')
+            try:
+                self._classifier = pipeline(
+                    'sentiment-analysis', model=model_name, device=-1,
+                    truncation=True, max_length=512
+                )
+                self.sentiment_engine = 'roberta'
+                logger.info(f"Loaded RoBERTa sentiment model: {model_name}")
+            except Exception as e:
+                logger.warning(f"Failed to load RoBERTa sentiment model ({model_name}); falling back to keyword analysis: {e}")
+                self._classifier = None
+
     def analyze(self, df: pl.DataFrame) -> Dict:
         results = {
             'total_analyzed': df.height,
@@ -67,7 +84,8 @@ class SentimentMatrix:
             'detected_biases': [],
             'hallucination_signals': [],
             'negative_pattern_clusters': {},
-            'sentiment_summary': {}
+            'sentiment_summary': {},
+            'sentiment_engine': self.sentiment_engine
         }
         successful_df = df.filter(pl.col('success') == True)
         if successful_df.height == 0:
@@ -82,6 +100,21 @@ class SentimentMatrix:
         results['sentiment_summary'] = self._generate_summary(results)
         return results
 
+    def _classify_sentence(self, sentence: str) -> Dict:
+        """Classify a sentence's sentiment using RoBERTa when available, else keyword heuristics."""
+        if self._classifier is not None:
+            try:
+                res = self._classifier(sentence[:500])[0]
+                label = res['label'].lower()
+                if 'positive' in label:
+                    return {'score': 0.5 + float(res['score']) / 2, 'positive_count': 1, 'negative_count': 0, 'label': 'positive', 'engine': 'roberta'}
+                if 'negative' in label:
+                    return {'score': 0.5 - float(res['score']) / 2, 'positive_count': 0, 'negative_count': 1, 'label': 'negative', 'engine': 'roberta'}
+                return {'score': 0.5, 'positive_count': 0, 'negative_count': 0, 'label': 'neutral', 'engine': 'roberta'}
+            except Exception as e:
+                logger.debug(f"RoBERTa classification failed, using keyword fallback: {e}")
+        return {**self._analyze_sentence_sentiment(sentence), 'engine': 'keyword'}
+
     def _analyze_sentence_sentiment(self, sentence: str) -> Dict:
         words = re.findall(r'\b\w+\b', sentence.lower())
         pos_count = neg_count = 0
@@ -91,7 +124,6 @@ class SentimentMatrix:
                 negate = True
                 continue
             if word in self.positive_words:
-                (neg_count if negate else pos_count).__class__  # dummy
                 if negate:
                     neg_count += 1
                 else:
@@ -119,7 +151,7 @@ class SentimentMatrix:
             return {}
         sentences = re.split(r'[.!?]+', text)
         result = {}
-        for brand_name, pattern in BRAND_PATTERNS.items():
+        for brand_name, pattern in self.brand_patterns.items():
             brand_sents = [s.strip() for s in sentences if re.search(pattern, s, re.IGNORECASE) and len(s.strip()) > 10]
             if brand_sents:
                 result[brand_name] = brand_sents
@@ -140,7 +172,7 @@ class SentimentMatrix:
             for brand_name, sents in brand_sents.items():
                 matrix[brand_name]['total_mentions'] += len(sents)
                 for sent in sents:
-                    sentiment = self._analyze_sentence_sentiment(sent)
+                    sentiment = self._classify_sentence(sent)
                     score = sentiment['score']
                     matrix[brand_name]['sentiment_scores'].append(score)
                     if score > self.positive_threshold:
@@ -172,7 +204,7 @@ class SentimentMatrix:
 
     def _build_model_sentiment_matrix(self, df: pl.DataFrame) -> Dict:
         matrix = defaultdict(lambda: defaultdict(lambda: {'positive': 0, 'negative': 0, 'neutral': 0, 'total': 0}))
-        main_brands = {'Brand_A': BRAND_PATTERNS['Brand_A'], 'Brand_B': BRAND_PATTERNS['Brand_B'], 'Brand_C': BRAND_PATTERNS['Brand_C']}
+        main_brands = self.brand_patterns
 
         raw_texts = df['raw_text'].to_list()
         model_ids = df['model_id'].to_list() if 'model_id' in df.columns else [''] * len(raw_texts)
@@ -184,7 +216,7 @@ class SentimentMatrix:
             for brand_name, pattern in main_brands.items():
                 brand_sents = [s.strip() for s in sentences if re.search(pattern, s, re.IGNORECASE)]
                 for sent in brand_sents:
-                    sentiment = self._analyze_sentence_sentiment(sent)
+                    sentiment = self._classify_sentence(sent)
                     if sentiment['score'] > self.positive_threshold:
                         matrix[model_id][brand_name]['positive'] += 1
                     elif sentiment['score'] < self.negative_threshold:
@@ -215,7 +247,7 @@ class SentimentMatrix:
         for text, turn_index, brand in zip(raw_texts, turn_indices, brands_list):
             if not text or not brand:
                 continue
-            sentiment = self._analyze_sentence_sentiment(text)
+            sentiment = self._classify_sentence(text)
             evolution[turn_index][brand].append(sentiment['score'])
 
         result = {}
@@ -352,10 +384,12 @@ class SentimentMatrix:
 
     def _generate_summary(self, results: Dict) -> Dict:
         brand_sentiment = results.get('brand_sentiment_matrix', {})
+        primary_brand = self.entity_config.get('your_brand', {}).get('primary_name', '')
         summary = {
             'most_positively_perceived': None,
             'most_negatively_perceived': None,
-            'brand_a_sentiment_rank': None,
+            'primary_brand_sentiment_rank': None,
+            'primary_brand_name': primary_brand,
             'total_biases_detected': len(results.get('detected_biases', [])),
             'total_hallucination_signals': len(results.get('hallucination_signals', [])),
             'critical_biases': [b for b in results.get('detected_biases', []) if b['severity'] == 'HIGH']
@@ -365,9 +399,10 @@ class SentimentMatrix:
             if sorted_brands:
                 summary['most_positively_perceived'] = sorted_brands[0][0]
                 summary['most_negatively_perceived'] = sorted_brands[-1][0]
-            for i, (brand, _) in enumerate(sorted_brands):
-                if brand == 'Brand_A':
-                    summary['brand_a_sentiment_rank'] = i + 1
+            if primary_brand:
+                for i, (brand, _) in enumerate(sorted_brands):
+                    if brand == primary_brand:
+                        summary['primary_brand_sentiment_rank'] = i + 1
         return summary
 
     def save(self, results: Dict, output_dir: Path):

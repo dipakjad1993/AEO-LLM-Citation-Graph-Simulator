@@ -12,6 +12,8 @@ from collections import Counter, defaultdict
 
 import polars as pl
 
+from brand_utils import build_brand_patterns
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -21,14 +23,11 @@ except ImportError:
     SPACY_AVAILABLE = False
     logger.warning("spaCy not available, using pattern-based fallback")
 
-BRAND_PATTERN = re.compile(r'Brand[_ -]?[ABC]|Competitor[_ -]?[BC]', re.IGNORECASE)
-BRAND_MATCH_PATTERNS = {
-    'Brand_A': re.compile(r'\bBrand[_ -]?A\b', re.IGNORECASE),
-    'Brand_B': re.compile(r'\bBrand[_ -]?B\b', re.IGNORECASE),
-    'Brand_C': re.compile(r'\bBrand[_ -]?C\b', re.IGNORECASE),
-    'Competitor_B': re.compile(r'\bCompetitor[_ -]?B\b', re.IGNORECASE),
-    'Competitor_C': re.compile(r'\bCompetitor[_ -]?C\b', re.IGNORECASE),
-}
+def build_combined_brand_pattern(pattern_strings: Dict[str, str]):
+    """Build a single combined regex from per-brand flex patterns."""
+    if not pattern_strings:
+        return re.compile(r'^\b$', re.IGNORECASE)
+    return re.compile('|'.join(f'(?:{p})' for p in pattern_strings.values()), re.IGNORECASE)
 
 VERB_PATTERNS = [
     (re.compile(r'(\b\w[\w\s]*?\b)\s+(provides?|offers?|includes?|supports?|features?|delivers?)\s+(\w[\w\s]*?)(?:\.|,|;|$)', re.I), 'positive'),
@@ -48,8 +47,8 @@ COMPARATIVE_PATTERNS = [
 ]
 
 
-def _match_brand(text: str, brand_hint: str = '') -> str:
-    for brand, pat in BRAND_MATCH_PATTERNS.items():
+def _match_brand(text: str, patterns: Dict, brand_hint: str = '') -> str:
+    for brand, pat in patterns.items():
         if pat.search(text):
             return brand
     if brand_hint and re.search(brand_hint.replace('_', '[_ -]?'), text, re.IGNORECASE):
@@ -84,6 +83,10 @@ class TripleExtractor:
         self.analytics_config = config.get('analytics', {})
         self.triple_config = self.analytics_config.get('triple_extraction', {})
         self.max_triples = self.triple_config.get('max_triples_per_sentence', 5) * 10
+        self.entity_config = config.get('entity_maps', {}).get('entity_maps', {})
+        brand_pattern_strings = build_brand_patterns(self.entity_config)
+        self.BRAND_MATCH_PATTERNS = {name: re.compile(pat, re.IGNORECASE) for name, pat in brand_pattern_strings.items()}
+        self.BRAND_PATTERN = build_combined_brand_pattern(brand_pattern_strings)
 
         self.nlp = None
         if SPACY_AVAILABLE:
@@ -170,7 +173,7 @@ class TripleExtractor:
                     triples.append({
                         'subject': subject.strip(), 'predicate': predicate.strip(),
                         'object': obj.strip(), 'sentiment': _classify_sentiment(predicate, is_negated),
-                        'is_negated': is_negated, 'brand': _match_brand(subject),
+                        'is_negated': is_negated, 'brand': _match_brand(subject, self.BRAND_MATCH_PATTERNS),
                         'confidence': 0.85, 'source': 'dependency_parsing',
                         'sentence': sent.text
                     })
@@ -196,7 +199,7 @@ class TripleExtractor:
                     triples.append({
                         'subject': subject, 'predicate': predicate, 'object': obj,
                         'sentiment': sentiment, 'is_negated': sentiment == 'negative',
-                        'brand': _match_brand(subject, brand_hint),
+                        'brand': _match_brand(subject, self.BRAND_MATCH_PATTERNS, brand_hint),
                         'confidence': 0.7, 'source': 'pattern_matching', 'sentence': sent
                     })
 
@@ -204,7 +207,7 @@ class TripleExtractor:
             for match in pattern.finditer(text):
                 entity1 = match.group(1).strip()
                 entity2 = match.group(2).strip() if match.lastindex >= 2 else ''
-                brand = _match_brand(entity1, brand_hint) or _match_brand(entity2, brand_hint)
+                brand = _match_brand(entity1, self.BRAND_MATCH_PATTERNS, brand_hint) or _match_brand(entity2, self.BRAND_MATCH_PATTERNS, brand_hint)
                 triples.append({
                     'subject': entity1, 'predicate': f'compared_to_{comp_type}',
                     'object': entity2, 'sentiment': 'comparative', 'is_negated': False,
@@ -217,7 +220,6 @@ class TripleExtractor:
         stats = {
             'total_triples_extracted': 0, 'unique_triples': 0,
             'triples_by_brand': {}, 'sentiment_distribution': {},
-            'negative_triples_brand_a': [], 'positive_triples_brand_a': [],
             'top_predicates': [], 'top_objects': [],
             'extraction_method': 'spacy' if self.nlp else 'pattern'
         }
@@ -257,13 +259,15 @@ class TripleExtractor:
                 'comparative': sum(1 for t in triples if t.get('sentiment') == 'comparative')
             }
 
-        brand_a_triples = brand_triples.get('Brand_A', [])
-        stats['negative_triples_brand_a'] = [
-            {'subject': t['subject'], 'predicate': t['predicate'], 'object': t['object'], 'sentence': t.get('sentence', '')[:200]}
-            for t in brand_a_triples if t.get('sentiment') == 'negative'
-        ][:10]
-        stats['positive_triples_brand_a'] = [
-            {'subject': t['subject'], 'predicate': t['predicate'], 'object': t['object'], 'sentence': t.get('sentence', '')[:200]}
-            for t in brand_a_triples if t.get('sentiment') == 'positive'
-        ][:10]
+        primary_brand_name = self.entity_config.get('your_brand', {}).get('primary_name', '')
+        if primary_brand_name and primary_brand_name in brand_triples:
+            brand_triples_list = brand_triples[primary_brand_name]
+            stats[f'negative_triples_{primary_brand_name.lower()}'] = [
+                {'subject': t['subject'], 'predicate': t['predicate'], 'object': t['object'], 'sentence': t.get('sentence', '')[:200]}
+                for t in brand_triples_list if t.get('sentiment') == 'negative'
+            ][:10]
+            stats[f'positive_triples_{primary_brand_name.lower()}'] = [
+                {'subject': t['subject'], 'predicate': t['predicate'], 'object': t['object'], 'sentence': t.get('sentence', '')[:200]}
+                for t in brand_triples_list if t.get('sentiment') == 'positive'
+            ][:10]
         return stats
