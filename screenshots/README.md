@@ -8,7 +8,6 @@ Real screenshots captured from the running tool:
 - `pipeline-stages.png` - Analysis pipeline progress view
 - `report-sections.png` - Individual report section (e.g., SoMV)
 - `usage-flow.png` - Upload and analysis workflow
-- `pdf-export.png` - Generated PDF report sample
 
 To capture your own screenshots:
 1. Start the server (`npm start`)

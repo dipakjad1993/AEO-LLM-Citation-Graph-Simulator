@@ -694,8 +694,6 @@ The exported PDF includes:
 - Tables and KPI cards
 - Recommendations and strategic summary
 
-![PDF Export](screenshots/pdf-export.png)
-
 ---
 
 ## 15. Configuration Reference
