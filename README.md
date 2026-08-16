@@ -366,6 +366,11 @@ The dashboard generates 10 detailed analysis sections, an executive-facing **CMO
 
 ![Report Sections](screenshots/report-sections.png)
 
+#### CMO Intelligence Dashboard
+The executive single-page-of-truth, computed live from this run's real analysis modules — SoMV leaderboard, data coverage, prioritized actions, and enterprise intelligence all in one view.
+
+![CMO Intelligence Dashboard](screenshots/cmo-dashboard.png)
+
 ---
 
 ## 8. Prerequisites
