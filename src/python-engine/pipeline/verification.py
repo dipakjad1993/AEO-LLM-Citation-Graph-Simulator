@@ -384,7 +384,7 @@ class GroundTruthClaimVerifier:
         for row_idx in range(df.height):
             row_claims = per_row.get(row_idx, [])
             verifications.append(row_claims)
-            verified_counts.append(sum(1 for c in row_claims if c['label'] in ('verified', 'partially_verified')))
+            verified_counts.append(sum(1 for c in row_claims if c['label'] == 'verified'))
         df = df.with_columns([
             pl.Series('claim_verification', verifications),
             pl.Series('verified_claim_count', verified_counts)
@@ -402,7 +402,8 @@ class GroundTruthClaimVerifier:
             return {
                 'total_claims': total,
                 **counts,
-                'verified_rate': round((counts['verified'] + counts['partially_verified']) / total, 4) if total else 0.0,
+                'verified_rate': round(counts['verified'] / total, 4) if total else 0.0,
+                'partially_verified_rate': round(counts['partially_verified'] / total, 4) if total else 0.0,
                 'contradiction_rate': round(counts['contradicted'] / total, 4) if total else 0.0
             }
 
