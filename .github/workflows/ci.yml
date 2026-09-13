@@ -23,8 +23,12 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements-lite.txt
-      - run: python -m spacy download en_core_web_sm || true
+      - name: Install spaCy model (strict — fail loudly, no silent degrade)
+        run: python -m spacy download en_core_web_sm && python -c "import spacy; spacy.load('en_core_web_sm'); print('spacy model OK')"
       # tests/ holds script-style readiness validators (pytest collects 0 tests
       # and exits 5) — the real hermetic gate is the eval goldens (exit 1/0).
       - run: python src/python-engine/tests/test_eval_goldens.py
-      - run: python seed_demo_data.py && python src/python-engine/main.py --run-dir data/output/run_demo
+      - name: Seed demo corpus
+        run: python -u seed_demo_data.py
+      - name: Run full demo pipeline (streams stage progress; traceback surfaced)
+        run: python -u src/python-engine/main.py --run-dir data/output/run_demo
