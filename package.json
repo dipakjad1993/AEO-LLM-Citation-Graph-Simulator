@@ -26,12 +26,13 @@
     "test": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py && python src/python-engine/tests/test_eval_goldens.py && node src/node-orchestrator/utils/testRunner.js && python src/python-engine/tests/test_pipeline.py"
   },
   "dependencies": {
-    "playwright": "^1.45.0",
+    "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "openai": "^4.52.0",
-    "@anthropic-ai/sdk": "^0.25.0",
-    "@google/generative-ai": "^0.14.0",
+    "openai": "^5.0.0",
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@google/genai": "^1.0.0",
+    "@google/generative-ai": "^0.24.0",
     "axios": "^1.7.2",
     "cheerio": "^1.0.0-rc.12",
     "p-queue": "^8.0.1",
@@ -42,7 +43,9 @@
     "jsonschema": "^1.4.1",
     "eventsource": "^2.0.2",
     "socks-proxy-agent": "^8.0.3",
-    "https-proxy-agent": "^7.0.4"
+    "https-proxy-agent": "^7.0.4",
+    "vis-network": "^9.1.2",
+    "tom-select": "^2.3.1"
   },
   "devDependencies": {
     "eslint": "^9.5.0"

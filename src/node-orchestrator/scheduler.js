@@ -9,7 +9,7 @@
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { spawnSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -81,7 +81,8 @@ export function checkAlerts() {
 }
 
 const args = process.argv.slice(2);
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows-safe entry guard (pathToFileURL canonicalizes drive letters/backslashes).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (args.includes('--check-alerts')) checkAlerts();
   else if (args.includes('--daily')) {
     console.log('Running daily tracking cycle (orchestrate + analyze + alerts)...');

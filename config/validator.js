@@ -7,7 +7,7 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -54,6 +54,9 @@ function validateModels(models) {
   if (!models || typeof models !== 'object') {
     return ['models.json: "models" must be an object keyed by provider'];
   }
+  const deprecatedIds = new Set(
+    Object.values(models.deprecated || {}).map((d) => d?.model_id).filter(Boolean)
+  );
   for (const [provider, providerModels] of Object.entries(models.models || {})) {
     if (typeof providerModels !== 'object' || !providerModels) {
       errors.push(`models.json: provider "${provider}" must be an object of models`);
@@ -65,12 +68,27 @@ function validateModels(models) {
         continue;
       }
       if (!modelConfig.model_id) errors.push(`models.json: "${provider}.${modelId}" missing "model_id"`);
+      // CI HARD FAIL: a shut-down 2024 ID must never be scheduled. (Orchestrator also
+      // refuses them at runtime; this fails the PR before it merges.)
+      if (deprecatedIds.has(modelConfig.model_id)) {
+        errors.push(`models.json: "${provider}.${modelId}" uses retired model_id "${modelConfig.model_id}" — migrate per the "deprecated" block (CI blocks retired IDs)`);
+      }
       if (typeof modelConfig.cost_per_1k_input !== 'number') errors.push(`models.json: "${provider}.${modelId}" missing numeric "cost_per_1k_input"`);
       if (typeof modelConfig.cost_per_1k_output !== 'number') errors.push(`models.json: "${provider}.${modelId}" missing numeric "cost_per_1k_output"`);
+      if (modelConfig.search_context_size !== undefined && !['high', 'medium', 'low'].includes(modelConfig.search_context_size)) {
+        errors.push(`models.json: "${provider}.${modelId}" search_context_size "${modelConfig.search_context_size}" invalid — must be high|medium|low (OpenAI 2026 spec; "128k" 400s)`);
+      }
       if (Array.isArray(modelConfig.temperature_range) && modelConfig.temperature_range.length === 2) {
         const [min, max] = modelConfig.temperature_range;
         if (min > max) errors.push(`models.json: "${provider}.${modelId}" temperature_range min > max`);
       }
+    }
+  }
+  // Late-2026 candidates must stay scheduled:false until their model_id is verified.
+  for (const [key, cand] of Object.entries(models.late_2026_candidates || {})) {
+    if (key.startsWith('_')) continue;
+    if (cand?.scheduled === true && cand?.registry_status === 'unverified') {
+      errors.push(`models.json: late_2026_candidates."${key}" is scheduled:true but registry_status is unverified — confirm the model_id against provider docs first`);
     }
   }
   return errors;
@@ -125,6 +143,18 @@ function validateExecution(execution) {
   }
   if (!Number.isInteger(execution.max_concurrent_api) || execution.max_concurrent_api < 1) {
     errors.push('execution.json: max_concurrent_api must be a positive integer');
+  }
+  if (execution.max_calls_per_run !== undefined &&
+      (!Number.isInteger(execution.max_calls_per_run) || execution.max_calls_per_run < 1)) {
+    errors.push('execution.json: max_calls_per_run must be a positive integer (fan-out explosion guard)');
+  }
+  const scs = execution.search_options?.search_context_size;
+  if (scs !== undefined && !['high', 'medium', 'low'].includes(scs)) {
+    errors.push(`execution.json: search_options.search_context_size "${scs}" invalid — must be high|medium|low`);
+  }
+  const countries = execution.geo?.countries;
+  if (countries !== undefined && (!Array.isArray(countries) || !countries.length || countries.some((c) => typeof c !== 'string'))) {
+    errors.push('execution.json: geo.countries must be a non-empty array of country-code strings');
   }
   const retry = execution.retry || {};
   if (!Number.isInteger(retry.attempts) || retry.attempts < 0) {
@@ -232,7 +262,8 @@ export function loadValidatedConfig() {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows-safe entry guard (pathToFileURL canonicalizes drive letters/backslashes).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const result = validateAllConfigs({ requireKeys: true });
     console.log('Configuration OK');

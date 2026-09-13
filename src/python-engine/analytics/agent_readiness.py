@@ -7,21 +7,52 @@ llms.txt is experimental + low-confidence, NOT a Google ranking factor
   ACP for ChatGPT Shopping
   isitagentready-style checklist
 """
+import json
 import logging
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+AGENT_UA = 'Mozilla/5.0 (compatible; AEO-Simulator/2.0; +agent-check)'
 
+
+@lru_cache(maxsize=64)
 def _fetch(url: str, timeout: int = 10) -> Optional[str]:
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'AEO-Simulator/1.0 (+agent-check)'})
+        req = urllib.request.Request(url, headers={'User-Agent': AGENT_UA})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read(100000).decode('utf-8', 'ignore')
+            return resp.read(200000).decode('utf-8', 'ignore')
     except Exception:
         return None
+
+
+def _fetch_many(urls, timeout=10, workers=5):
+    out = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch, u, timeout): u for u in urls}
+        for f, u in futs.items():
+            try:
+                out[u] = f.result()
+            except Exception:
+                out[u] = None
+    return out
+
+
+def _valid_mcp_manifest(body: Optional[str]) -> bool:
+    if not body:
+        return False
+    try:
+        data = json.loads(body)
+    except Exception:
+        return False
+    if isinstance(data, dict):
+        tools = data.get('tools') or data.get('capabilities') or data.get('functions')
+        return isinstance(tools, list) and len(tools) > 0
+    return False
 
 
 class AgentReadiness:
@@ -53,14 +84,20 @@ class AgentReadiness:
         checks['llms_txt'] = {'score': llms_score, 'present': bool(llms), 'llms_full': bool(llms_full), 'notes': llms_notes,
                               'weight_note': 'Experimental. Score for agents only — do NOT sell as SEO.'}
 
-        # 2. MCP / WebMCP Tool Contract
+        # 2. MCP / WebMCP Tool Contract (+ UCP search_catalog, JSON-validated)
+        mcp_paths = ['/.well-known/mcp.json', '/mcp.json', '/api/mcp', '/api/ucp/mcp']
+        fetched = _fetch_many([self.website + p for p in mcp_paths])
         mcp_hits = []
-        for path in ['/.well-known/mcp.json', '/mcp.json', '/api/mcp', '/api/ucp/mcp']:
-            body = _fetch(self.website + path)
+        mcp_validated = []
+        for path in mcp_paths:
+            body = fetched.get(self.website + path)
             if body and ('search_catalog' in body or 'mcp' in body.lower()[:500]):
                 mcp_hits.append(path)
+            if _valid_mcp_manifest(body):
+                mcp_validated.append(path)
         mcp_score = 100 if mcp_hits else 0
-        checks['mcp_webmcp'] = {'score': mcp_score, 'endpoints_found': mcp_hits,
+        checks['mcp_webmcp'] = {'score': mcp_score, 'endpoints_found': mcp_hits, 'json_validated': mcp_validated,
+            'validation_note': 'Substring probe is a smoke signal only; json_validated lists endpoints returning a parseable tool manifest.',
             'notes': [f'MCP/UCP endpoint(s): {mcp_hits}'] if mcp_hits else ['No MCP/WebMCP Tool Contract or UCP search_catalog found.']}
 
         # 3. ACP (ChatGPT Shopping / agentic checkout)

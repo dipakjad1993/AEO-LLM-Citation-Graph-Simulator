@@ -6,13 +6,21 @@
 
 export class RateLimiter {
   constructor(limits) {
-    this.rpm = limits.rpm || 60;
-    this.tpm = limits.tpm || 100000;
+    this.rpm = (limits && limits.rpm) || 60;
+    this.tpm = (limits && limits.tpm) || 100000;
     this.requestTimestamps = [];
     this.tokenCount = 0;
     this.windowMs = 60000;
     this.waitingQueue = [];
     this.processing = false;
+    this._timers = new Set();
+  }
+
+  _decay(count) {
+    // P0 FIX: track timer handles + unref so decay timers never leak / hold the loop open.
+    const h = setTimeout(() => { this.tokenCount = Math.max(0, this.tokenCount - count); this._timers.delete(h); }, this.windowMs);
+    if (h && typeof h.unref === 'function') h.unref();
+    this._timers.add(h);
   }
 
   async waitForSlot({ inputTokens = 0, outputTokens = 0 } = {}) {
@@ -38,12 +46,16 @@ export class RateLimiter {
 
       if (rpmAvailable && tokensAvailable) {
         this.requestTimestamps.push(now);
-        this.tokenCount += head.tokens;
+        // P0 FIX: single accounting point. waitForSlot only reserves ACTUAL estimated
+        // tokens (>0); the post-call trackTokens() call reports real usage. Old code
+        // double-counted: reservation + actual.
+        if (head.tokens > 0) {
+          this.tokenCount += head.tokens;
+          this._decay(head.tokens);
+          head.tokens = 0; // consumed: trackTokens() below becomes the only addition
+        }
         this.waitingQueue.shift();
         head.resolve();
-        // Token bucket rotates: a rolling estimate of tokens in the last window.
-        // Debounce with the window so the count reflects recent usage only.
-        setTimeout(() => { this.tokenCount = Math.max(0, this.tokenCount - head.tokens); }, this.windowMs);
       } else {
         let waitTime = 100;
         if (!rpmAvailable) {
@@ -66,8 +78,9 @@ export class RateLimiter {
   }
 
   trackTokens(count) {
+    if (!count || count <= 0) return;
     this.tokenCount += count;
-    setTimeout(() => { this.tokenCount = Math.max(0, this.tokenCount - count); }, this.windowMs);
+    this._decay(count);
   }
 
   getStats() {

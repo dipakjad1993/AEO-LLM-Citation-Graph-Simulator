@@ -279,12 +279,32 @@ class SentimentMatrix:
                 if matches:
                     pattern_cooccurrence[brand][bias_name] += len(matches)
 
+        import math as _math
+        n_resp = len([t for t in raw_texts if t]) or 1
+
+        def _wilson(p, n, z=1.96):
+            if n <= 0:
+                return (0.0, 0.0)
+            denom = 1 + z * z / n
+            center = p + z * z / (2 * n)
+            margin = z * _math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+            return (round(max(0.0, (center - margin) / denom), 4), round(min(1.0, (center + margin) / denom), 4))
+
         for brand, patterns in pattern_cooccurrence.items():
             for pattern_name, count in patterns.items():
                 if count >= 3:
+                    # Wilson CI over response prevalence (responses containing the pattern
+                    # at least once / non-empty responses). n<30 = wide bars, honestly shown.
+                    import re as _re
+                    pat = self.bias_patterns[pattern_name]
+                    hit_resp = sum(1 for t in raw_texts if t and _re.search(pat, t, _re.IGNORECASE))
+                    rate = hit_resp / n_resp
                     biases.append({
                         'brand': brand, 'bias_pattern': pattern_name,
                         'occurrence_count': count,
+                        'response_prevalence': round(rate, 4),
+                        'response_prevalence_ci95': _wilson(rate, n_resp),
+                        'n_responses': n_resp,
                         'pattern_display': pattern_name.replace('_', ' ').title(),
                         'severity': 'HIGH' if count >= 10 else 'MEDIUM' if count >= 5 else 'LOW',
                         'remediation': self._get_remediation(pattern_name, brand)

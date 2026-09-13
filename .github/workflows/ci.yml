@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci || npm install
       # Hermetic unit tests only. testRunner.js is a LOCAL readiness gate
       # (requires .env + real brand in entity_maps.json) — it can never pass
@@ -31,4 +31,8 @@ jobs:
       - name: Seed demo corpus
         run: python -u seed_demo_data.py
       - name: Run full demo pipeline (streams stage progress; traceback surfaced)
+        # Seed rows are labelled demo_synthetic and quarantined by default —
+        # the demo opts in explicitly via AEO_ALLOW_SYNTHETIC=1 (same as --run).
         run: python -u src/python-engine/main.py --run-dir data/output/run_demo
+        env:
+          AEO_ALLOW_SYNTHETIC: "1"

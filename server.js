@@ -25,13 +25,26 @@ const STATIC_DIRS = [
   { prefix: '/screenshots/', dir: path.join(ROOT, 'screenshots') },
   { prefix: '/src/dashboard/', dir: path.join(ROOT, 'src', 'dashboard') },
 ];
-// Basic per-IP rate limit (60 req/min)
+// Basic per-IP rate limit (60 req/min) with bounded memory: prune stale entries
+// every check and evict oldest IPs past MAX_IPS so the Map cannot grow unbounded (DoS).
 const hits = new Map();
+const MAX_IPS = 5000;
 function rateLimited(ip) {
   const now = Date.now();
   const arr = (hits.get(ip) || []).filter(t => now - t < 60000);
   arr.push(now);
   hits.set(ip, arr);
+  if (hits.size > MAX_IPS) {
+    // Evict ~10% oldest: Map iterates in insertion order.
+    let n = Math.ceil(MAX_IPS / 10);
+    for (const k of hits.keys()) { hits.delete(k); if (--n <= 0) break; }
+  }
+  // Opportunistic sweep: drop IPs whose window fully expired.
+  if (hits.size % 50 === 0) {
+    for (const [k, v] of hits) {
+      if (!v.length || now - v[v.length - 1] > 60000) hits.delete(k);
+    }
+  }
   return arr.length > 60;
 }
 
@@ -63,9 +76,13 @@ function readBody(req, limit = MAX_BODY_BYTES) {
   });
 }
 
+const ALLOWED_ORIGIN = process.env.AEO_CORS_ORIGIN || '*';
+function corsHeaders() {
+  return { 'Access-Control-Allow-Origin': ALLOWED_ORIGIN };
+}
 function jsonRes(res, code, data) {
   const body = JSON.stringify(data);
-  res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Content-Length': Buffer.byteLength(body) });
+  res.writeHead(code, { 'Content-Type': 'application/json', ...corsHeaders(), 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
 }
 
@@ -75,10 +92,20 @@ function secureHeaders(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
+const IS_PROD = process.env.NODE_ENV === 'production';
+if (IS_PROD && !AUTH_TOKEN) {
+  console.error('FATAL: NODE_ENV=production requires AEO_AUTH_TOKEN. Refusing to start unauthenticated.');
+  process.exit(1);
+}
 function authed(req) {
-  if (!AUTH_TOKEN) return true; // dev default; set AEO_AUTH_TOKEN in prod
+  if (!AUTH_TOKEN) return !IS_PROD; // dev default; prod refuses to boot without a token (see above)
   const h = req.headers.authorization || '';
-  return h === `Bearer ${AUTH_TOKEN}`;
+  // Constant-time compare to avoid timing oracle on the token.
+  const want = `Bearer ${AUTH_TOKEN}`;
+  if (h.length !== want.length) return false;
+  let diff = 0;
+  for (let i = 0; i < want.length; i++) diff |= h.charCodeAt(i) ^ want.charCodeAt(i);
+  return diff === 0;
 }
 
 function findPython() {
@@ -174,6 +201,21 @@ function parseMultipart(buffer, boundary) {
   return parts;
 }
 
+function slimSummary(s) {
+  // Keep the keys dashboards need; drop hunting-license-sized text/citation blobs.
+  const keep = ['somv', 'volatility', 'enterprise_insights', 'site_audit', 'agent_readiness',
+    'commerce', 'traffic_join', 'verification', 'data_quality', 'recommendations',
+    'pipeline_meta', 'run_metadata', 'grounded_only'];
+  const out = {};
+  for (const k of keep) if (s[k] !== undefined) out[k] = s[k];
+  // Trim heavy nested lists to head items with total counts.
+  if (out.recommendations?.length > 50) {
+    out.recommendations = out.recommendations.slice(0, 50);
+    out.recommendations_truncated = true;
+  }
+  return out;
+}
+
 function findLatestOrchestratorResults() {
   if (!fs.existsSync(OUTPUT_DIR)) return null;
   const dirs = fs.readdirSync(OUTPUT_DIR).filter(d => d.startsWith('run_')).sort().reverse();
@@ -241,7 +283,8 @@ function assembleDataForAnalysis(runDir) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   secureHeaders(res);
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
+  if (ALLOWED_ORIGIN !== '*') res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
@@ -415,22 +458,48 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === '/api/results' && req.method === 'GET') {
+      // Paginated + bounded: ?include=summary (default) | html | full. The dashboard HTML
+      // can be multi-MB — never ship it unless explicitly requested (old code always did).
+      const include = url.searchParams.get('include') || 'summary';
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '1', 10) || 1, 10);
       const sorted = Object.entries(procs)
         .filter(([, p]) => p.status === 'completed' && p.analysisDir)
-        .sort(([, a], [, b]) => b.startTime - a.startTime);
+        .sort(([, a], [, b]) => b.startTime - a.startTime)
+        .slice(0, limit);
       if (!sorted.length) { jsonRes(res, 200, { hasData: false }); return; }
-      const [procId, proc] = sorted[0];
-      const analysisPath = proc.analysisDir;
-      const result = { hasData: true, analysisDir: path.basename(analysisPath) };
-      const sp = path.join(analysisPath, 'pipeline_summary.json');
-      if (fs.existsSync(sp)) result.summary = JSON.parse(fs.readFileSync(sp, 'utf8'));
-      const dp = path.join(analysisPath, 'dashboard', 'aeo_dashboard.html');
-      if (fs.existsSync(dp)) result.dashboardHtml = fs.readFileSync(dp, 'utf8');
-      const dsPath = path.join(proc.runDir, 'data_source.json');
-      if (fs.existsSync(dsPath)) {
-        try { result.dataSource = JSON.parse(fs.readFileSync(dsPath, 'utf8')); } catch {}
+      const out = [];
+      for (const [procId, proc] of sorted) {
+        const analysisPath = proc.analysisDir;
+        const result = { hasData: true, procId, analysisDir: path.basename(analysisPath) };
+        const sp = path.join(analysisPath, 'pipeline_summary.json');
+        if (fs.existsSync(sp)) {
+          const summary = JSON.parse(fs.readFileSync(sp, 'utf8'));
+          if (include === 'summary') {
+            // Slim projection: top-level keys + counts, not full text blobs.
+            result.summary = slimSummary(summary);
+          } else {
+            result.summary = summary;
+          }
+        }
+        if (include === 'html' || include === 'full') {
+          const dp = path.join(analysisPath, 'dashboard', 'aeo_dashboard.html');
+          if (fs.existsSync(dp)) {
+            const stat = fs.statSync(dp);
+            if (stat.size > 15 * 1024 * 1024) {
+              result.dashboardTruncated = true;
+              result.dashboardHtml = fs.readFileSync(dp, 'utf8').slice(0, 15 * 1024 * 1024);
+            } else {
+              result.dashboardHtml = fs.readFileSync(dp, 'utf8');
+            }
+          }
+        }
+        const dsPath = path.join(proc.runDir, 'data_source.json');
+        if (fs.existsSync(dsPath)) {
+          try { result.dataSource = JSON.parse(fs.readFileSync(dsPath, 'utf8')); } catch {}
+        }
+        out.push(result);
       }
-      jsonRes(res, 200, result);
+      jsonRes(res, 200, limit === 1 ? out[0] : { hasData: true, results: out });
       return;
     }
 
@@ -454,6 +523,30 @@ const server = http.createServer(async (req, res) => {
     // Health check (Render/Docker probes; no auth required)
     if (url.pathname === '/api/health' && req.method === 'GET') {
       jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString() });
+      return;
+    }
+
+    // API export: ?format=json (full slim summary) | csv (flat SoMV by_model for
+    // Looker Studio / Sheets: brand,model,mention_rate,primary_rate,omission_rate,n).
+    if (url.pathname === '/api/export' && req.method === 'GET') {
+      const format = (url.searchParams.get('format') || 'json').toLowerCase();
+      const analysisDir = findLatestAnalysis();
+      if (!analysisDir) { jsonRes(res, 404, { error: 'No completed analysis to export' }); return; }
+      const summary = JSON.parse(fs.readFileSync(path.join(analysisDir, 'pipeline_summary.json'), 'utf8'));
+      if (format === 'csv') {
+        const rows = [['brand', 'model', 'mention_rate', 'primary_recommendation_rate', 'omission_rate', 'n']];
+        const byModel = summary?.somv?.by_model || {};
+        for (const [model, data] of Object.entries(byModel)) {
+          for (const [brand, s] of Object.entries(data?.brand_stats || {})) {
+            rows.push([brand, model, s.mention_rate ?? '', s.primary_recommendation_rate ?? '', s.omission_rate ?? '', s.n ?? '']);
+          }
+        }
+        const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        res.writeHead(200, { 'Content-Type': 'text/csv', ...corsHeaders(), 'Content-Disposition': 'attachment; filename="aeo_somv.csv"' });
+        res.end(csv);
+        return;
+      }
+      jsonRes(res, 200, { analysisDir: path.basename(analysisDir), summary: slimSummary(summary) });
       return;
     }
 

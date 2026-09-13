@@ -13,10 +13,21 @@ from typing import Dict, List, Any
 from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
+import math
 import polars as pl
 import numpy as np
 
 from brand_utils import build_brand_patterns
+
+
+def _wilson(p: float, n: int, z: float = 1.96):
+    """95% Wilson score interval for a binomial rate (fail-safe for n<30)."""
+    if n <= 0:
+        return (0.0, 0.0)
+    denom = 1 + z * z / n
+    center = p + z * z / (2 * n)
+    margin = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (round(max(0.0, (center - margin) / denom), 4), round(min(1.0, (center + margin) / denom), 4))
 
 logger = logging.getLogger(__name__)
 
@@ -41,18 +52,49 @@ class ShareOfVoiceCalculator:
         pat = self._brand_re[brand]
         return sum(1 for t in texts if t and pat.search(str(t)))
 
+    VERDICT_SIGNALS = ('recommend', 'top pick', 'best choice', 'best for', 'winner',
+                         'go with', 'our pick', 'verdict', 'tl;dr', 'bottom line',
+                         'market leader', 'leading', 'first choice', 'number 1', 'number one')
+
     def _is_primary_mention(self, text: str, brand: str) -> bool:
+        """P0 FIX: old rule (first-sentence OR keyword-in-first-3) inflated leadership —
+        any brand named in sentence 1 counted as 'primary'. New rule requires BOTH:
+          (a) verdict position: brand appears in the response's verdict zone (first
+              sentence, last paragraph, or a sentence carrying an explicit verdict
+              signal such as recommend/verdict/bottom-line), AND
+          (b) rank position: brand is named at or before any competitor (character
+              offset of first brand match <= min offset of competitor matches).
+        This matches how SoMV leadership is actually read (who WINS the answer)."""
         if not text:
             return False
-        pat = self._brand_re[brand]
-        sentences = re.split(r'[.!?]+', text[:1000])
-        for sent in sentences[:3]:
-            if pat.search(sent):
-                if any(ind in sent.lower() for ind in ['recommend', 'top', 'best', 'leading', 'primary', 'first choice', 'market leader']):
-                    return True
-                if sentences.index(sent) == 0:
-                    return True
-        return False
+        pat = self._brand_re.get(brand)
+        if pat is None:
+            return False
+        lowered = text.lower()
+        m = pat.search(text)
+        if not m:
+            return False
+        # (b) rank position first (cheap): must not trail a competitor.
+        comp_offsets = []
+        for other, op in self._brand_re.items():
+            if other == brand:
+                continue
+            om = op.search(text)
+            if om:
+                comp_offsets.append(om.start())
+        if comp_offsets and m.start() > min(comp_offsets):
+            return False
+        # (a) verdict zone: first sentence OR explicit verdict signal in same sentence
+        # OR brand in closing paragraph (verdicts live at the end in 2026 answer styles).
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text[:4000]) if s.strip()]
+        if not sentences:
+            return False
+        first = sentences[0]
+        last_para = text.strip().split('\n\n')[-1][:600]
+        in_first = bool(pat.search(first))
+        verdict_sent = any(pat.search(s) and any(sig in s.lower() for sig in self.VERDICT_SIGNALS) for s in sentences[:6])
+        in_closing = bool(pat.search(last_para))
+        return bool(in_first or verdict_sent or in_closing)
 
     def calculate(self, df: pl.DataFrame) -> Dict:
         results = {
@@ -88,13 +130,20 @@ class ShareOfVoiceCalculator:
             mention_count = self._count_mentions_batch(raw_texts, brand)
             total_mentions_all += mention_count
             primary_count = sum(1 for t in raw_texts if t and self._brand_mentioned(str(t), brand) and self._is_primary_mention(str(t), brand))
+            mr = mention_count / total if total > 0 else 0
+            pr = primary_count / total if total > 0 else 0
             brand_stats[brand] = {
                 'mention_count': mention_count,
-                'mention_rate': mention_count / total if total > 0 else 0,
+                'mention_rate': mr,
+                'mention_rate_ci95': _wilson(mr, total),
                 'primary_recommendation_count': primary_count,
-                'primary_recommendation_rate': primary_count / total if total > 0 else 0,
+                'primary_recommendation_rate': pr,
+                'primary_recommendation_rate_ci95': _wilson(pr, total),
                 'secondary_mention_count': mention_count - primary_count,
-                'omission_rate': 1 - (mention_count / total) if total > 0 else 1
+                'omission_rate': 1 - mr if total > 0 else 1,
+                'omission_rate_ci95': _wilson(1 - mr if total > 0 else 1.0, total),
+                'n': total,
+                'ci_note': 'nsmall' if total < 30 else 'ok',
             }
         total_mentions_all = total_mentions_all or 1
         for brand in brand_stats:
@@ -233,7 +282,11 @@ class ShareOfVoiceCalculator:
                 browse_by_model[str(m)] = {
                     'browse_rate': round(g / sub.height, 4) if sub.height else 0,
                     'grounded': g, 'total': sub.height,
-                    'flag': 'LOW_BROWSE_RATE' if sub.height >= 5 and g / sub.height < 0.5 else 'OK',
+                    # P0: two-tier honesty — <50% is a data-quality failure, <74% trails
+                    # the Stork Aug-2026 benchmark (~74% browse even when asked).
+                    'flag': ('LOW_BROWSE_RATE' if (sub.height >= 5 and g / sub.height < 0.5)
+                             else 'BELOW_BENCHMARK_74' if (sub.height >= 5 and g / sub.height < 0.74)
+                             else 'OK'),
                 }
         out['browse_rate_by_model'] = browse_by_model
         if out['grounded_share'] < 0.74:

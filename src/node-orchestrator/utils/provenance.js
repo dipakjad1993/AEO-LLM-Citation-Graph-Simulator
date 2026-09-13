@@ -114,6 +114,11 @@ export function writeManifest(runDir, manifest) {
   return path;
 }
 
+export function privacyFlags(config) {
+  const p = config?.execution?.privacy || {};
+  return { hashOnlyRaw: p.hash_only_raw === true, redactPersisted: p.redact_pii !== false };
+}
+
 export function appendAuditEntry(logDir, entry) {
   const file = join(logDir, 'audit.log');
   mkdirSync(logDir, { recursive: true });
@@ -125,16 +130,36 @@ export function appendAuditEntry(logDir, entry) {
   return file;
 }
 
-export function persistRawResponse(runDir, { executionId, provider, raw }) {
+const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+const TOKEN_RE = /\b(sk-[A-Za-z0-9-_]{8,}|xox[bpas]-[A-Za-z0-9-]+|ghp_[A-Za-z0-9]+)\b/g;
+
+export function redactPII(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(EMAIL_RE, '[email-redacted]').replace(TOKEN_RE, '[secret-redacted]');
+}
+
+export function persistRawResponse(runDir, { executionId, provider, raw }, { hashOnly = false, redact = true } = {}) {
   const dir = join(runDir, 'raw_responses');
   mkdirSync(dir, { recursive: true });
   const safeProvider = String(provider || 'unknown').replace(/[^a-z0-9]/gi, '_');
   const path = join(dir, `${safeProvider}_${executionId}.json`);
+  // Privacy: hash-only mode stores content_hash + redacted preview (no PII/plaintext at rest).
+  // redact=true scrubs emails + obvious secrets from persisted copies (in-memory analysis unaffected).
+  let payload = raw;
+  if (hashOnly) {
+    const flat = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    payload = { content_hash: sha256Text(flat), preview_redacted: redactPII(flat).slice(0, 500), hash_only: true };
+  } else if (redact) {
+    try {
+      const flat = JSON.stringify(raw);
+      payload = JSON.parse(redactPII(flat));
+    } catch { payload = raw; }
+  }
   writeFileSync(path, JSON.stringify({
     executionId,
     provider,
     saved_at: new Date().toISOString(),
-    raw
+    raw: payload
   }, null, 2));
   return path;
 }

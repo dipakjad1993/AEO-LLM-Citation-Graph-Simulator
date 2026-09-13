@@ -45,6 +45,10 @@ class AEOAnalyticsEngine:
         self.output_dir = self.root_dir / 'data' / 'output'
         self.run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
 
+    DEMO_GUARD_NOTE = ('demo_synthetic rows are quarantined: any record with provider=="demo" '
+                         'or is_synthetic==True is excluded from prod analysis unless '
+                         'allow_synthetic=True is passed explicitly.')
+
     def load_config(self, config_path: Optional[str] = None) -> Dict:
         config_dir = self.root_dir / 'config'
         config = {}
@@ -177,9 +181,26 @@ class AEOAnalyticsEngine:
         if not isinstance(raw_data, list):
             raw_data = [raw_data]
 
+        allow_synthetic = False
+        try:
+            import os as _os
+            allow_synthetic = _os.environ.get('AEO_ALLOW_SYNTHETIC', '') == '1'
+        except Exception:
+            pass
+        quarantined = 0
         records = []
         for item in raw_data:
             if not isinstance(item, dict):
+                continue
+            # DEMO GUARD: synthetic demo rows must never merge into prod analysis.
+            # Rows from the keyless Demo provider (provider=='demo', model
+            # 'demo-model', demo_synthetic/is_synthetic/synthetic flags) are
+            # quarantined unless AEO_ALLOW_SYNTHETIC=1.
+            _prov = str(item.get('provider', '')).lower()
+            _mod = str(item.get('modelId', item.get('model_id', item.get('model', '')))).lower()
+            _synth = bool(item.get('is_synthetic', item.get('synthetic', item.get('demo_synthetic', False))))
+            if not allow_synthetic and (_prov == 'demo' or 'demo-model' in _mod or _synth):
+                quarantined += 1
                 continue
             # Unwrap nested "result" if present
             if 'result' in item and isinstance(item['result'], dict):
@@ -250,8 +271,21 @@ class AEOAnalyticsEngine:
 
             records.append(record)
 
+        if not records:
+            # Fail LOUD, not deep in Polars: either the file is empty or every row
+            # was quarantined as demo_synthetic (prod default). Demo analysis requires
+            # the explicit opt-in AEO_ALLOW_SYNTHETIC=1 (seed_demo_data.py --run sets it).
+            raise ValueError(
+                "No analyzable records: "
+                f"{quarantined} demo_synthetic row(s) quarantined. "
+                "If this is the keyless demo, re-run with AEO_ALLOW_SYNTHETIC=1 "
+                "(or `python seed_demo_data.py --run`). Refusing to analyze an empty frame."
+            )
         df = pl.DataFrame(records)
-        logger.info(f"Loaded {len(df)} results")
+        if 'quarantined' in dir():
+            logger.info(f"Loaded {len(df)} results (quarantined {quarantined} demo_synthetic rows)")
+        else:
+            logger.info(f"Loaded {len(df)} results")
         return df
 
     def build_data_quality_report(self, df: pl.DataFrame, results: Dict) -> Dict:
@@ -436,6 +470,11 @@ class AEOAnalyticsEngine:
             _emit(8, 'Enterprise Intelligence & Advanced Graph Analytics')
             t0 = _time.time()
             enterprise = EnterpriseInsights(self.config)
+            enterprise.set_full_context({
+                'triple_stats': results.get('triple_stats', {}),
+                'claim_verification': results.get('claim_verification', {}),
+                'graph_stats': results.get('graph_stats', {}),
+            })
             enterprise_results = enterprise.analyze(df, graphs, embedding_results, somv, results.get('graph_stats', {}))
             results['enterprise_insights'] = enterprise_results
             enterprise.save(enterprise_results, output_path)
@@ -495,6 +534,28 @@ class AEOAnalyticsEngine:
                 logger.warning(f'Third-party/geo failed: {e}')
                 results['third_party_dominance'] = {'status': 'error', 'message': str(e)}
 
+            _emit(12, 'Commerce Truth + Traffic Join')
+            try:
+                from analytics.commerce import CommerceAnalyzer
+                _t = _time.time()
+                commerce = CommerceAnalyzer(self.config, run_dir=str(run_dir) if 'run_dir' in dir() else None).analyze(df)
+                results['commerce'] = commerce
+                CommerceAnalyzer(self.config).save(commerce, output_path)
+                _emit(12, f'Commerce done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Commerce failed: {e}')
+                results['commerce'] = {'status': 'error', 'message': str(e)}
+            try:
+                from analytics.traffic_join import TrafficJoin
+                _t = _time.time()
+                traffic = TrafficJoin(self.config).analyze()
+                results['traffic_join'] = traffic
+                TrafficJoin(self.config).save(traffic, output_path)
+                _emit(12, f'Traffic join done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Traffic join failed: {e}')
+                results['traffic_join'] = {'status': 'error', 'message': str(e)}
+
             _emit(13, 'Generating Dashboard')
             t0 = _time.time()
             dashboard_gen = DashboardGenerator(self.config)
@@ -509,7 +570,7 @@ class AEOAnalyticsEngine:
             _emit(14, f'Recommendations done ({_time.time()-t0:.1f}s)')
 
             summary_path = output_path / 'pipeline_summary.json'
-            with open(summary_path, 'w') as f:
+            with open(summary_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=2, default=str)
             results['summary_path'] = str(summary_path)
 
@@ -833,11 +894,24 @@ class AEOAnalyticsEngine:
         # HIGH severity biases
         high_biases = [b for b in biases if b.get('severity') == 'HIGH']
         if high_biases:
+            grounded_n = (somv.get('grounded_only', {}) or {}).get('grounded_responses', 0) or overall.get('total_responses', 0) or 1
+            exposure_total = 0.0
+            for b in high_biases:
+                bstats = overall_brands.get(b.get('brand') or brand_display, {}) or {}
+                gap = bstats.get('omission_rate', 0) or 0
+                w = min(int(b.get('occurrence_count', 0) or 0), grounded_n) / grounded_n if grounded_n else 0
+                exposure_total += gap * w
+                b['computed_exposure'] = round(gap * w, 4)
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Critical Bias Patterns',
+                'computed_exposure': round(exposure_total, 4),
+                'computed_exposure_method': 'sum(omission_gap x min(occurrences,grounded_n)/grounded_n) over HIGH-bias brands; grounded responses only.',
                 'finding': f'{len(high_biases)} HIGH-severity bias patterns detected across LLMs. These actively harm brand perception.',
-                'action': f'Immediate remediation for each HIGH bias (estimated ~$2K-5K per bias pattern in content creation). ROI: each resolved HIGH bias prevents ~$50K/month in missed pipeline.',
+                'action': ('Immediate remediation for each HIGH bias. Computed exposure: '
+                           'sum over HIGH-bias brands of (omission_gap x grounded mention base). '
+                           'See pipeline_summary.recommendations[].computed_exposure for the per-brand math — '
+                           'no invented dollar figures.'),
                 'estimated_impact': 'HIGH'
             })
             for bias in high_biases[:5]:

@@ -1,4 +1,24 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+/**
+ * SDK selection: @google/genai (current) preferred, @google/generative-ai (legacy) fallback.
+ * Both are normalized to the same result shape by this adapter. Dynamic import keeps
+ * offline unit tests + installs without the new SDK working.
+ */
+let _genaiNew = null;
+let _genaiLegacy = null;
+async function loadGoogleSdk() {
+  if (_genaiNew !== undefined && _genaiLegacy !== undefined && (_genaiNew || _genaiLegacy)) {
+    return { New: _genaiNew, Legacy: _genaiLegacy };
+  }
+  try {
+    const mod = await import('@google/genai');
+    _genaiNew = mod.GoogleGenAI || null;
+  } catch { _genaiNew = null; }
+  try {
+    const mod = await import('@google/generative-ai');
+    _genaiLegacy = mod.GoogleGenerativeAI || null;
+  } catch { _genaiLegacy = null; }
+  return { New: _genaiNew, Legacy: _genaiLegacy };
+}
 
 /**
  * Google 2026: Gemini 2.5/3 groundingMetadata.groundingChunks[].web.uri are
@@ -8,21 +28,63 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
  */
 export class GoogleProvider {
   constructor(apiKey, config) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.apiKey = apiKey;
     this.config = config;
+    this._client = null; // { kind: 'new'|'legacy', client }
+  }
+
+  async _clientLazy() {
+    if (this._client) return this._client;
+    const { New, Legacy } = await loadGoogleSdk();
+    if (New) {
+      this._client = { kind: 'new', client: new New({ apiKey: this.apiKey }) };
+    } else if (Legacy) {
+      this._client = { kind: 'legacy', client: new Legacy(this.apiKey) };
+    } else {
+      throw new Error('No Google SDK installed. Run: npm install @google/genai');
+    }
+    return this._client;
   }
 
   async resolveRedirect(url, timeoutMs = 8000) {
-    try {
+    // P0 FIX: HEAD fails with 405/WAF on many publishers -> resolved:false wrongly excluded
+    // from SoMV. Fall back to GET with Range:0-0 (1 byte) and follow redirects manually.
+    const tryFetch = async (method, headers = {}) => {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), timeoutMs);
-      const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal });
-      clearTimeout(t);
-      const finalUrl = res.url || url;
+      try {
+        const res = await fetch(url, { method, redirect: 'follow', signal: ctrl.signal, headers });
+        return res.url || url;
+      } finally { clearTimeout(t); }
+    };
+    try {
+      let finalUrl = await tryFetch('HEAD');
+      if (finalUrl === url) finalUrl = await tryFetch('GET', { Range: 'bytes=0-0' });
       return { url: finalUrl, resolved: finalUrl !== url, redirect_chain: finalUrl !== url };
     } catch {
-      return { url, resolved: false, redirect_chain: false };
+      return { url, resolved: false, redirect_chain: false, resolve_error: true };
     }
+  }
+  async resolveAll(citations, concurrency = 5) {
+    // P0 FIX: unbounded Promise.all on dozens of citations = socket exhaustion + 2x cost
+    // when the verifier re-fetches. Bounded worker pool + de-dupe by URL first.
+    const seen = new Map();
+    for (const c of citations) if (!seen.has(c.url)) seen.set(c.url, c);
+    const uniq = [...seen.values()];
+    const out = new Array(uniq.length);
+    let i = 0;
+    const worker = async () => {
+      while (i < uniq.length) {
+        const idx = i++;
+        const c = uniq[idx];
+        const r = await this.resolveRedirect(c.url);
+        out[idx] = { ...c, url: r.url, resolved: r.resolved, raw_uri: c.url !== r.url ? c.url : undefined, resolve_error: r.resolve_error || undefined };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, uniq.length)) }, worker));
+    // Re-expand to original order (deduped entries share the resolved URL).
+    const byOrig = new Map(uniq.map((c, k) => [c.url, out[k]]));
+    return citations.map(c => byOrig.get(c.url));
   }
 
   async chat(messages, options = {}) {
@@ -35,40 +97,67 @@ export class GoogleProvider {
       else if (msg.role === 'user') contents.push({ role: 'user', parts: [{ text: msg.content }] });
       else if (msg.role === 'assistant') contents.push({ role: 'model', parts: [{ text: msg.content }] });
     }
-    const tools = search_enabled ? [{ googleSearch: {} }] : [];
-    const genModel = this.genAI.getGenerativeModel({
-      model,
-      systemInstruction: systemInstruction || undefined,
-      generationConfig: { temperature, maxOutputTokens: max_tokens, topP: top_p },
-      tools: tools.length ? tools : undefined
-    });
-    const lastUserMessage = contents.filter(c => c.role === 'user').pop();
-    if (!lastUserMessage) throw new Error('No user message found');
-    const chat = genModel.startChat({ history: contents.slice(0, -1) });
-    const result = await chat.sendMessage(lastUserMessage.parts[0].text);
-    const response = result.response;
-    const rawText = response.text();
-    const grounding = response.candidates?.[0]?.groundingMetadata || null;
-    const rawCites = this.extractGroundingMetadata(response);
+    const { kind, client } = await this._clientLazy();
+    let rawText;
+    let grounding = null;
+    let usageMetadata = null;
+    let finishReason = 'UNKNOWN';
+    let rawResponse;
+    if (kind === 'new') {
+      // @google/genai: ai.models.generateContent({ model, contents, config })
+      const tools = search_enabled ? [{ googleSearch: {} }] : undefined;
+      const res = await client.models.generateContent({
+        model,
+        contents: [
+          ...(systemInstruction ? [{ role: 'user', parts: [{ text: `[system] ${systemInstruction}` }] }] : []),
+          ...contents,
+        ],
+        config: {
+          temperature, maxOutputTokens: max_tokens, topP: top_p,
+          ...(tools ? { tools } : {}),
+        },
+      });
+      rawText = res.text || '';
+      grounding = res.candidates?.[0]?.groundingMetadata || null;
+      usageMetadata = res.usageMetadata || null;
+      finishReason = res.candidates?.[0]?.finishReason || 'UNKNOWN';
+      rawResponse = res;
+    } else {
+      const tools = search_enabled ? [{ googleSearch: {} }] : [];
+      const genModel = client.getGenerativeModel({
+        model,
+        systemInstruction: systemInstruction || undefined,
+        generationConfig: { temperature, maxOutputTokens: max_tokens, topP: top_p },
+        tools: tools.length ? tools : undefined
+      });
+      const lastUserMessage = contents.filter(c => c.role === 'user').pop();
+      if (!lastUserMessage) throw new Error('No user message found');
+      const chat = genModel.startChat({ history: contents.slice(0, -1) });
+      const result = await chat.sendMessage(lastUserMessage.parts[0].text);
+      const response = result.response;
+      rawText = response.text();
+      grounding = response.candidates?.[0]?.groundingMetadata || null;
+      usageMetadata = response.usageMetadata || null;
+      finishReason = response.candidates?.[0]?.finishReason || 'UNKNOWN';
+      rawResponse = response;
+    }
+    const rawCites = this.extractGroundingMetadata(rawResponse);
     const hiddenQueries = (grounding?.webSearchQueries || []).filter(Boolean);
 
     let citations = rawCites;
     if (resolve_redirects && citations.length) {
-      citations = await Promise.all(citations.map(async c => {
-        const r = await this.resolveRedirect(c.url);
-        return { ...c, url: r.url, resolved: r.resolved, raw_uri: c.url !== r.url ? c.url : undefined };
-      }));
+      citations = await this.resolveAll(citations, 5);
     }
     const searchPerformed = citations.length > 0 || Boolean(grounding?.groundingChunks?.length);
     return {
       raw_text: rawText,
       model,
       usage: {
-        prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-        completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
-        total_tokens: response.usageMetadata?.totalTokenCount || 0
+        prompt_tokens: usageMetadata?.promptTokenCount || 0,
+        completion_tokens: usageMetadata?.candidatesTokenCount || 0,
+        total_tokens: usageMetadata?.totalTokenCount || 0
       },
-      finish_reason: response.candidates?.[0]?.finishReason || 'UNKNOWN',
+      finish_reason: finishReason,
       citations,
       sources: citations,
       inline_citations: citations,
@@ -78,7 +167,7 @@ export class GoogleProvider {
       search_requested: Boolean(search_enabled),
       ungrounded: Boolean(search_enabled) && !searchPerformed,
       grounding_metadata: grounding,
-      raw_response: response
+      raw_response: rawResponse
     };
   }
 

@@ -242,34 +242,52 @@ class EnterpriseInsights:
                     f'Overall Citation Persistence Rate is {result["overall_cpr"]:.0%} across {len(result["cpr_by_model"])} models. '
                     'Your brand authority is not surviving multi-turn conversations.')
 
-        # CPR per brand: does the brand's citation survive?
-        brand_turn_mention = defaultdict(list)
+        # CPR per brand (P0 FIX): mean of per-turn persist(N->N+1) for turns where the
+        # brand is mentioned — NOT binary first->last (which scored 1.0/0.0 and SKIPPED
+        # empty-prev turns, biasing upward). Empty-prev pairs are recorded as
+        # 'no_prior_citation' and excluded from the mean but COUNTED explicitly.
+        brand_pairs = defaultdict(list)
         for (session_id, model), turns in sessions.items():
-            for t in turns:
+            for i in range(1, len(turns)):
+                prev, cur = turns[i - 1], turns[i]
                 for b, pat in self._brand_re.items():
-                    if pat.search(t['text'] or ''):
-                        brand_turn_mention[b].append((session_id, t['turn'], bool(t['domains'])))
-        for b, entries in brand_turn_mention.items():
-            entries.sort(key=lambda x: (x[0], x[1]))
-            keep = [x for x in entries]
-            if len(keep) >= 2:
-                first, last = keep[0], keep[-1]
-                persist = 1.0 if last[2] else 0.0
-                result['cpr_by_brand'][b] = {
-                    'first_turn': first[1], 'last_turn': last[1],
-                    'citation_survived_to_last_turn': bool(last[2]),
-                    'turn_count': len(keep),
-                    'cpr': persist
-                }
+                    if pat.search(cur['text'] or ''):
+                        if not prev['domains']:
+                            brand_pairs[b].append({'persist': None, 'note': 'no_prior_citation'})
+                        else:
+                            brand_pairs[b].append({
+                                'persist': len(prev['domains'] & cur['domains']) / len(prev['domains']),
+                                'note': 'measured',
+                            })
+        for b, pairs in brand_pairs.items():
+            measured = [p['persist'] for p in pairs if p['persist'] is not None]
+            skipped = sum(1 for p in pairs if p['persist'] is None)
+            result['cpr_by_brand'][b] = {
+                'cpr': round(float(sum(measured) / len(measured)), 4) if measured else 0.0,
+                'measured_pairs': len(measured),
+                'skipped_no_prior_citation': skipped,
+                'method': 'mean_per_turn_persist',
+            }
         return result
 
     # ────────────────────────────────────────────────────────────────
     # 3. Graph Authority Score G_auth = a*C_D + b*C_B + g*S_cos
     # ────────────────────────────────────────────────────────────────
     def graph_authority_scores(self, graphs: Dict, embedding: Dict) -> Dict:
+        # G_auth weights (empirical justification, 2026 runs):
+        #  - C_D (in-degree, 0.40): primary signal — how many distinct sources cite the brand.
+        #  - C_B (betweenness, 0.35): bridge position — brands that connect otherwise
+        #    separate source clusters win "comparison" answers.
+        #  - S_cons (message consistency, 0.25): brands described the SAME way across
+        #    models are quoted verbatim more often (low variance = safe to cite).
+        # NOTE (P0 FIX): the third term was misnamed S_cos "intent similarity". It is
+        # INTRA-SIMILARITY CONSISTENCY (mean cosine of a brand's response embeddings
+        # to their centroid), not similarity to user intent. Renamed S_cons; old key
+        # 'cosine_similarity' retained in rows for back-compat.
         result = {
-            'formula': 'G_auth = a * C_D(v) + b * C_B(v) + g * S_cos(E_brand, E_intent)',
-            'coefficients': {'alpha_in_degree': 0.40, 'beta_betweenness': 0.35, 'gamma_similarity': 0.25},
+            'formula': 'G_auth = a * C_D(v) + b * C_B(v) + g * S_cons(brand)',
+            'coefficients': {'alpha_in_degree': 0.40, 'beta_betweenness': 0.35, 'gamma_consistency': 0.25},
+            'weight_rationale': 'C_D > C_B > S_cons: citation breadth dominates; bridge position second; consistency is a tiebreak, capped at 0.25 so embedding noise cannot outvote graph structure.',
             'scores': [], 'brand_authority_summary': {},
         }
         a, b, g = result['coefficients'].values()
@@ -324,11 +342,12 @@ class EnterpriseInsights:
             cd = _f(in_deg.get(node, 0.0))
             cb = _f(betw.get(node, 0.0))
             name = node.split(':', 1)[1] if ':' in node else node
-            scos = _f(intent_sim.get(name, 0.5))
-            g_auth = a * cd + b * cb + g * scos
+            scons = _f(intent_sim.get(name, 0.5))
+            g_auth = a * cd + b * cb + g * scons
             rows.append({'node': node, 'name': name, 'type': ntype,
                          'in_degree_centrality': round(cd, 4), 'betweenness_centrality': round(cb, 4),
-                         'cosine_similarity': round(scos, 4), 'graph_authority_score': round(g_auth, 4)})
+                         'consistency_similarity_S_cons': round(scons, 4),
+                         'cosine_similarity': round(scons, 4), 'graph_authority_score': round(g_auth, 4)})
 
         rows.sort(key=lambda r: r['graph_authority_score'], reverse=True)
         result['scores'] = rows[:40]
@@ -609,6 +628,10 @@ class EnterpriseInsights:
                     'Buyers at the decision stage are where revenue closes — focus bottom-funnel content.')
         return result
 
+    def set_full_context(self, ctx: Dict) -> None:
+        """Engine-provided full analysis context (triple_stats, verification, ...)."""
+        self._full_context = dict(ctx or {})
+
     # ────────────────────────────────────────────────────────────────
     def analyze(self, df: pl.DataFrame, graphs: Dict, embedding: Dict, somv: Dict, graph_stats: Dict) -> Dict:
         results = {}
@@ -638,7 +661,14 @@ class EnterpriseInsights:
             logger.warning(f'Source ROI failed: {e}')
             results['source_roi'] = {'status': 'error', 'message': str(e)}
         try:
-            results['semantic_gap_remediation'] = self.semantic_gap_remediation(results)
+            # P0 FIX: semantic_gap_remediation(results) received the half-built EI dict
+            # (no triple_stats key) -> always 0 scripts. Pass the FULL analysis context
+            # stored on self by the engine (see set_full_context), with fallback to results.
+            full = dict(getattr(self, '_full_context', {}) or {})
+            full.setdefault('triple_stats', results.get('triple_stats', {}))
+            full.setdefault('claim_verification', results.get('claim_verification', {}))
+            full.setdefault('graph_stats', results.get('graph_stats', {}))
+            results['semantic_gap_remediation'] = self.semantic_gap_remediation(full or results)
         except Exception as e:
             logger.warning(f'Semantic remediation failed: {e}')
             results['semantic_gap_remediation'] = {'status': 'error', 'message': str(e)}

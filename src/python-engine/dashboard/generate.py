@@ -72,10 +72,25 @@ class DashboardGenerator:
             if grounded_fig:
                 charts.append(('Grounded vs Memory (Browse Evidence)', grounded_fig))
 
+            cpr_fig = self._create_cpr_chart(results)
+            if cpr_fig:
+                charts.append(('Citation Persistence (CPR) by Model', cpr_fig))
+
+            gauth_fig = self._create_gauth_chart(results)
+            if gauth_fig:
+                charts.append(('Graph Authority G_auth (Top Brands)', gauth_fig))
+
+            vol_fig = self._create_volatility_chart(results)
+            if vol_fig:
+                charts.append(('Answer Volatility (Win Rate + 95% CI)', vol_fig))
+
         html = self._generate_html(results, charts)
+        html = html.replace('PLOTLY_CDN_PLACEHOLDER', self._plotly_js_tag())
 
         dashboard_path = dashboard_dir / 'aeo_dashboard.html'
-        with open(dashboard_path, 'w') as f:
+        # UTF-8 explicitly: inlined Plotly bundle + CJK/emoji content break on
+        # Windows cp1252 default (UnicodeEncodeError killed stage 13).
+        with open(dashboard_path, 'w', encoding='utf-8') as f:
             f.write(html)
 
         self._save_json_data(results, dashboard_dir)
@@ -322,6 +337,63 @@ class DashboardGenerator:
 
         return fig
 
+    def _create_cpr_chart(self, results: Dict):
+        ei = results.get('enterprise_insights', {}) or {}
+        cpr = (ei.get('multi_turn_cpr', {}) or {}).get('cpr_by_model', {}) or {}
+        if not cpr:
+            return None
+        models = sorted(cpr.keys())
+        vals = [cpr[m] for m in models]
+        fig = go.Figure(go.Bar(x=models, y=[v * 100 for v in vals],
+                               marker_color=['#2ecc71' if v >= 0.5 else '#e74c3c' for v in vals]))
+        fig.update_layout(title='Citation Persistence Rate (higher = authority survives multi-turn)',
+                          xaxis_title='Model', yaxis_title='CPR (%)', yaxis_range=[0, 100],
+                          template='plotly_dark' if self.theme == 'dark' else 'plotly_white', height=400)
+        return fig
+
+    def _create_gauth_chart(self, results: Dict):
+        ei = results.get('enterprise_insights', {}) or {}
+        summ = (ei.get('graph_authority', {}) or {}).get('brand_authority_summary', {}) or {}
+        if not summ:
+            return None
+        names = sorted(summ.keys(), key=lambda b: summ[b].get('graph_authority_score', 0), reverse=True)[:10]
+        vals = [summ[b].get('graph_authority_score', 0) for b in names]
+        fig = go.Figure(go.Bar(x=names, y=vals, marker_color='#9b59b6'))
+        fig.update_layout(title='G_auth = 0.40*C_D + 0.35*C_B + 0.25*S_cons (message consistency)',
+                          xaxis_title='Brand', yaxis_title='G_auth',
+                          template='plotly_dark' if self.theme == 'dark' else 'plotly_white', height=400)
+        return fig
+
+    def _create_volatility_chart(self, results: Dict):
+        vol = results.get('volatility', {}) or {}
+        wr = vol.get('brand_win_rates', {}) or {}
+        if not wr:
+            return None
+        brands = sorted(wr.keys())
+        rates = [wr[b].get('rate', 0) * 100 for b in brands]
+        lo = [wr[b].get('ci95', [0, 0])[0] * 100 for b in brands]
+        hi = [wr[b].get('ci95', [0, 0])[1] * 100 for b in brands]
+        fig = go.Figure(go.Bar(x=brands, y=rates,
+                               error_y=dict(type='data', symmetric=False,
+                                            arrayminus=[r - l for r, l in zip(rates, lo)],
+                                            array=[h - r for r, h in zip(rates, hi)]),
+                               marker_color='#3498db'))
+        fig.update_layout(title='Repeat-run win rate with Wilson 95% CI (n<30 = wide bars, honestly)',
+                          xaxis_title='Brand', yaxis_title='Win rate (%)',
+                          template='plotly_dark' if self.theme == 'dark' else 'plotly_white', height=400)
+        return fig
+
+    def _plotly_js_tag(self) -> str:
+        # Offline-first: inline the pip-installed plotly bundle (get_plotlyjs) so the
+        # dashboard renders with zero network. Fall back to CDN only when plotly
+        # is absent (lite installs).
+        try:
+            from plotly.offline import get_plotlyjs
+            bundle = get_plotlyjs()
+            return bundle + "\n/* plotly inlined offline (no CDN) */"
+        except Exception:
+            return 'document.write(\'<script src="https://cdn.plot.ly/plotly-latest.min.js">\\x3C/script>\')'
+
     def _generate_html(self, results: Dict, charts: List) -> str:
         somv = results.get('somv', {})
         overall = somv.get('overall', {})
@@ -380,7 +452,7 @@ class DashboardGenerator:
             """
 
         recommendation_html = ""
-        for rec in recommendations[:10]:
+        for rec in recommendations:
             priority_class = f"priority-{rec.get('priority', 'INFO').lower()}"
             recommendation_html += f"""
             <div class="recommendation {priority_class}">
@@ -480,6 +552,43 @@ class DashboardGenerator:
         {gt_sources_html}
         """
 
+        commerce = results.get('commerce', {}) or {}
+        pc = (commerce.get('product_cards', {}) or {}).get('overall', {})
+        fh = commerce.get('feed_health', {}) or {}
+        acp = commerce.get('acp', {}) or {}
+        ucp = commerce.get('ucp', {}) or {}
+        rufus = commerce.get('rufus', {}) or {}
+        feeds = fh.get('feeds', []) or []
+        feed_rows = ''.join(
+            f"<tr><td>{f.get('feed','')}</td><td>{f.get('items',0)}</td>"
+            f"<td>{', '.join(f'{k}:{v}' for k, v in (f.get('missing_fields', {}) or {}).items()) or 'complete'}</td></tr>"
+            for f in feeds[:5])
+        commerce_html = f"""
+            <div class="ver-rates">
+                <span class="rate">Product-card rate: {pc.get('card_rate', 0):.1%}</span>
+                <span class="rate">Feeds checked: {fh.get('feeds_checked', 0)}</span>
+                <span class="rate">ACP checkout: {'YES' if acp.get('checkout_eligible') else 'NO'}</span>
+                <span class="rate">UCP native_commerce: {'YES' if ucp.get('native_commerce') else 'NO'}</span>
+                <span class="rate">Rufus score: {rufus.get('score', 0)}</span>
+            </div>
+            <p class="ver-note">{(commerce.get('product_cards', {}) or {}).get('finding', '')} {fh.get('message', '')}</p>
+            {'<table><thead><tr><th>Feed</th><th>Items</th><th>Missing fields</th></tr></thead><tbody>' + feed_rows + '</tbody></table>' if feed_rows else ''}
+            <p class="ver-note">ACP: {acp.get('detail', '')} UCP: {ucp.get('detail', '')} Rufus: {rufus.get('detail', '')}</p>
+        """
+
+        traffic = results.get('traffic_join', {}) or {}
+        gsc = traffic.get('gsc_generative_gate', {}) or {}
+        ga4 = traffic.get('ga4_ai_referrers', {}) or {}
+        traffic_html = f"""
+            <div class="ver-rates">
+                <span class="rate">Generative-inclusion rate: {gsc.get('generative_inclusion_rate', 0):.1%}</span>
+                <span class="rate">AI session share: {ga4.get('ai_session_share', 0):.1%}</span>
+                <span class="rate">AI revenue share: {ga4.get('ai_revenue_share', 0):.1%}</span>
+            </div>
+            <p class="ver-note">GSC: {gsc.get('message', gsc.get('evidence', ''))} GA4: {ga4.get('message', ga4.get('evidence', ''))}</p>
+            <p class="ver-note">Drop a Search Console export (query, clicks, impressions, ai_overview_present) + GA4 export (source, sessions, conversions, revenue) into data/uploads/traffic/ to prove revenue. Without the join, SoMV cannot claim pipeline.</p>
+        """
+
         total_records = results.get('total_records_analyzed', results.get('total_records', 0))
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -489,7 +598,18 @@ class DashboardGenerator:
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AEO Citation Graph Simulator - Dashboard</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script>PLOTLY_CDN_PLACEHOLDER</script>
+    <script>
+    function filterRecs(q) {{
+        q = (q || '').toLowerCase();
+        document.querySelectorAll('.recommendation').forEach(function(el) {{
+            el.style.display = (!q || el.textContent.toLowerCase().includes(q)) ? '' : 'none';
+        }});
+        var n = 0;
+        document.querySelectorAll('.recommendation').forEach(function(el) {{ if (el.style.display !== 'none') n++; }});
+        var c = document.getElementById('rec-count'); if (c) c.textContent = n + ' shown';
+    }}
+    </script>
     <style>
         :root {{
             --bg-primary: #0d1117;
@@ -902,8 +1022,21 @@ class DashboardGenerator:
         </div>
 
         <div class="section">
-            <h2>Actionable Recommendations</h2>
+            <h2>Actionable Recommendations ({len(recommendations)} total)</h2>
+            <input type="text" id="rec-search" placeholder="Search recommendations..." oninput="filterRecs(this.value)"
+                style="width:100%;padding:10px;margin-bottom:12px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;" />
+            <p style="color:var(--text-secondary)"><span id="rec-count">{len(recommendations)} shown</span> | computed_exposure = omission_gap x grounded-mention-base (no invented dollars)</p>
             {recommendation_html}
+        </div>
+
+        <div class="section">
+            <h2>Commerce Truth (Agentic Shopping)</h2>
+            {commerce_html}
+        </div>
+
+        <div class="section">
+            <h2>Traffic Join (GSC Gate + AI Referrers)</h2>
+            {traffic_html}
         </div>
 
         <div class="section">
@@ -938,7 +1071,7 @@ class DashboardGenerator:
             if isinstance(value, (dict, list)):
                 filepath = json_dir / f'{key}.json'
                 try:
-                    with open(filepath, 'w') as f:
-                        json.dump(value, f, indent=2, default=str)
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        json.dump(value, f, indent=2, default=str, ensure_ascii=False)
                 except Exception as e:
                     logger.warning(f"Failed to save {key}: {e}")

@@ -1,0 +1,17 @@
+# Never bake secrets or host state into the image.
+.env
+.env.*
+*.pem
+*.key
+node_modules/
+.git/
+.gitignore
+logs/
+data/output/
+data/uploads/
+data/sessions/
+.pytest_cache/
+__pycache__/
+*.pyc
+ screenshots/
+.opencode/

@@ -13,9 +13,21 @@ export class OpenAIProvider {
     this.config = config;
   }
 
+  static VALID_CONTEXT = new Set(['high', 'medium', 'low']);
+  normalizeContextSize(v) {
+    // P0 FIX: '128k' is NOT a valid search_context_size (400 error). Spec: high|medium|low.
+    if (OpenAIProvider.VALID_CONTEXT.has(v)) return v;
+    const s = String(v || '').toLowerCase();
+    if (s.includes('128') || s.includes('high') || s.includes('large')) return 'high';
+    if (s.includes('low') || s.includes('small')) return 'low';
+    return 'medium';
+  }
   buildSearchTool(options = {}) {
     const tool = { type: 'web_search' };
-    if (options.search_context_size) tool.search_context_size = options.search_context_size;
+    tool.search_context_size = this.normalizeContextSize(options.search_context_size);
+    // 2026 spec shape: filters:{allowed_domains:[...]} + return_sources request flag.
+    if (options.allowed_domains?.length) tool.filters = { allowed_domains: options.allowed_domains };
+    if (options.return_sources) tool.return_sources = options.return_sources;
     return tool;
   }
 
@@ -30,12 +42,13 @@ export class OpenAIProvider {
       tool_choice = 'auto',
       allowed_domains = [],
       search_context_size = 'medium',
+      return_sources = 'full_list',
       use_responses_api = true,
       stream = false
     } = options;
 
     if (use_responses_api && !stream) {
-      return this.chatViaResponses(messages, { model, temperature, max_tokens, top_p, seed, search_enabled, tool_choice, allowed_domains, search_context_size });
+      return this.chatViaResponses(messages, { model, temperature, max_tokens, top_p, seed, search_enabled, tool_choice, allowed_domains, search_context_size, return_sources });
     }
     return this.chatViaChatCompletions(messages, { model, temperature, max_tokens, top_p, seed, search_enabled, tool_choice, allowed_domains });
   }
@@ -57,9 +70,15 @@ export class OpenAIProvider {
     };
     if (opts.seed !== undefined) body.seed = opts.seed;
     if (opts.search_enabled) {
-      body.tools = [this.buildSearchTool({ search_context_size: opts.search_context_size })];
+      body.tools = [this.buildSearchTool({
+        search_context_size: opts.search_context_size,
+        allowed_domains: opts.allowed_domains,
+        return_sources: opts.return_sources || 'full_list',
+      })];
       body.tool_choice = opts.tool_choice || 'auto';
-      if (opts.allowed_domains?.length) body.tools[0].filters = { allowed_domains: opts.allowed_domains };
+    } else {
+      // P0 FIX: RAG-off twin must not browse. tool_choice:none guarantees memory baseline.
+      body.tool_choice = 'none';
     }
     const response = await this.client.responses.create(body);
     return this.parseResponsesApi(response, opts);

@@ -16,6 +16,7 @@ export class GrokProvider {
     const { model = 'grok-4', temperature = 0.15, max_tokens = 4096, top_p = 0.9, search_enabled = true, tool_choice = 'auto' } = options;
     const body = { model, messages: messages.map(m => ({ role: m.role, content: m.content })), temperature, max_tokens, top_p };
     if (search_enabled) { body.tools = [{ type: 'web_search' }]; body.tool_choice = tool_choice; }
+    else { body.tool_choice = 'none'; }
     const response = await axios.post(this.baseUrl, body, {
       headers: { 'Authorization': `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
       timeout: 120000

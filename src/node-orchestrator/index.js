@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join } from 'path';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
@@ -26,6 +26,7 @@ import {
   writeManifest,
   appendAuditEntry,
   persistRawResponse,
+  privacyFlags,
   randomRunId
 } from './utils/provenance.js';
 
@@ -64,7 +65,7 @@ class AEOOrchestrator {
     this.playwrightScraper = null;
     this.promptGenerator = new PromptGenerator(this.config);
     this.responseExtractor = new ResponseExtractor();
-    this.costTracker = new CostTracker(this.config);
+    this.costTracker = new CostTracker(this.config, { runId: this.runId });
     this.responseVerifier = new ResponseVerifier(this.config, {
       online: this.config.execution?.verification?.citation_http_check !== false,
       concurrency: this.config.execution?.verification?.citation_concurrency || 8
@@ -224,11 +225,16 @@ class AEOOrchestrator {
     }
 
     if (apiKeyMap.serp) {
+      const serpLimits = this.config.execution?.rate_limiting?.serp || { rpm: 60, tpm: 32000 };
       this.providers.microsoft = new CopilotProvider(apiKeyMap.serp, this.config);
       this.providers['google-serp'] = new AIOverviewsProvider(apiKeyMap.serp, this.config);
-      this.rateLimiters.microsoft = new RateLimiter({ rpm: 60, tpm: 32000 });
-      this.rateLimiters['google-serp'] = new RateLimiter({ rpm: 60, tpm: 32000 });
-      logger.info('SERP providers initialized (Copilot + AI Overviews/AI Mode)');
+      // P0 FIX: AI Mode is a SEPARATE surface (AIO/AI-Mode share only ~13.7% citations).
+      // It was imported but never instantiated, so models.json ai-mode was silently skipped.
+      this.providers['ai-mode'] = new AIModeProvider(apiKeyMap.serp, this.config);
+      this.rateLimiters.microsoft = new RateLimiter(this.config.execution?.rate_limiting?.microsoft || serpLimits);
+      this.rateLimiters['google-serp'] = new RateLimiter(this.config.execution?.rate_limiting?.['google-serp'] || serpLimits);
+      this.rateLimiters['ai-mode'] = new RateLimiter(this.config.execution?.rate_limiting?.['ai-mode'] || serpLimits);
+      logger.info('SERP providers initialized (Copilot + AI Overviews + AI Mode)');
     }
 
     // Demo mode: keyless synthetic provider so `npm start -- --demo` works with zero keys.
@@ -260,11 +266,17 @@ class AEOOrchestrator {
     logger.info('Starting AEO simulation run', { sessionId: this.sessionId });
     this.modelFilter = Array.isArray(options.models) ? new Set(options.models) : null;
 
-    const prompts = await this.promptGenerator.generateAllPrompts(
-      options.promptCount || this.config.execution.prompt_count || 50,
-      options.personas || undefined
-    );
-    logger.info(`Generated ${prompts.length} multi-turn prompt sessions`);
+    const countries = this.config.execution?.geo?.countries?.length
+      ? this.config.execution.geo.countries
+      : [this.config.execution?.geo?.default_country || 'us'];
+    const perCountry = Math.max(1, Math.ceil((options.promptCount || this.config.execution.prompt_count || 50) / countries.length));
+    let prompts = [];
+    for (const country of countries) {
+      const batch = await this.promptGenerator.generateAllPrompts(perCountry, options.personas || undefined);
+      for (const s of batch) { s.geo = String(country).toLowerCase(); }
+      prompts.push(...batch);
+    }
+    logger.info(`Generated ${prompts.length} multi-turn prompt sessions across ${countries.length} countr[y/ies]: ${countries.join(',')}`);
 
     const executionPlan = this.buildExecutionPlan(prompts);
     logger.info(`Execution plan: ${executionPlan.length} total API calls across ${Object.keys(this.providers).length} providers`);
@@ -300,6 +312,9 @@ class AEOOrchestrator {
     const plan = [];
     const mode = this.config.execution.mode;
     const playwrightSampleRate = this.config.execution.playwright_sample_rate;
+    // P0 FIX: hard stop on fan-out explosion (50 prompts*4 turns*11 models*5 reps*2 twins
+    // ~= 22k calls would trip the $500 budget mid-run). Truncate deterministically.
+    const maxCalls = this.config.execution?.max_calls_per_run || 2500;
     // Volatility: repeat money prompts N times to measure answer variance (AIO shifts ~70% on repeat).
     const vol = this.config.execution?.volatility || {};
     const repeats = Math.max(1, Math.min(vol.repeats || 1, 10));
@@ -347,15 +362,34 @@ class AEOOrchestrator {
       }
     }
 
+    if (plan.length > maxCalls) {
+      logger.warn(`Execution plan has ${plan.length} calls; truncating to max_calls_per_run=${maxCalls}. ` +
+        `Reduce prompt_count, volatility.repeats, models, or raise max_calls_per_run.`);
+      // Keep high-priority (turn 0 + RAG-on) tasks first, drop twins/repeats from the tail.
+      const pri = (t) => (t.priority === 'high' ? 0 : t.ragEnabled ? 1 : 2);
+      plan.sort((a, b) => pri(a) - pri(b));
+      return plan.slice(0, maxCalls);
+    }
     return plan;
   }
 
   selectModelsForPrompt(promptSession) {
     const allModelIds = [];
     const modelsConfig = this.config.models.models;
+    // Runtime refusal: retired IDs (shutdown 2026-07-23 web_search_preview etc.) are never
+    // scheduled even if left in the registry. Validator also fails CI on them.
+    const retired = new Set(
+      Object.values(this.config.models.deprecated || {}).map((d) => d?.model_id).filter(Boolean)
+    );
+    // Unverified late-2026 candidates are never scheduled until flipped to scheduled:true.
+    const blocked = (mc) => retired.has(mc?.model_id) || (mc?.scheduled === false && mc?.registry_status === 'unverified');
 
     for (const [providerName, providerModels] of Object.entries(modelsConfig)) {
       for (const [modelId, modelConfig] of Object.entries(providerModels)) {
+        if (blocked(modelConfig)) {
+          logger.warn(`Skipping retired/unverified model ${providerName}.${modelId} (not scheduled)`);
+          continue;
+        }
         if (this.providers[providerName] && (!this.modelFilter || this.modelFilter.has(modelId))) {
           allModelIds.push(modelId);
         }
@@ -380,20 +414,46 @@ class AEOOrchestrator {
     return null;
   }
 
+  estimatePlanCost(prompts) {
+    // Pre-flight cost guard: estimate worst-case spend before any paid call.
+    const models = this.selectModelsForPrompt({});
+    let perCall = 0;
+    for (const m of models) {
+      const cfg = this.getProviderForModel(m)?.modelConfig;
+      if (cfg) perCall += this.costTracker.estimateCost(cfg, 1500, 800);
+    }
+    perCall = models.length ? perCall / models.length : 0.035;
+    const turns = this.config.execution?.multi_turn_fallback_turns || 4;
+    return { estimatedCalls: prompts.length * turns * Math.max(models.length, 1), perCall, estimatedTotal: prompts.length * turns * Math.max(models.length, 1) * perCall };
+  }
+
   async executePlan(plan) {
     const results = [];
     const batchedPlan = this.batchByPriority(plan);
+    // History cache: `${sessionId}::${modelId}::${channel}` -> Map(turnIndex -> preview text).
+    // executeTask stores each completed turn's preview here; buildMessages reads it back,
+    // so multi-turn prompts chain REAL assistant history (single-turn fan-out is no more).
+    this._historyCache = new Map();
 
     for (const batch of batchedPlan) {
       const batchResults = await Promise.allSettled(
         batch.tasks.map(task => this.executeTask(task))
       );
-      results.push(...batchResults.map((r, i) => ({
+      const mapped = batchResults.map((r, i) => ({
         ...batch.tasks[i],
         result: r.status === 'fulfilled' ? r.value : null,
         error: r.status === 'rejected' ? (r.reason?.message || String(r.reason)) : null,
         status: r.status
-      })));
+      }));
+      for (const item of mapped) {
+        if (item.status === 'fulfilled' && item.result?.raw_text) {
+          const key = `${item.promptSession?.sessionId}::${item.modelId}::${item.usePlaywright ? 'web_ui' : 'api'}::${item.ragEnabled ? 'rag' : 'base'}`;
+          if (!this._historyCache.has(key)) this._historyCache.set(key, new Map());
+          // Keep preview bounded (first 1500 chars) to control context growth.
+          this._historyCache.get(key).set(item.turn?.turnIndex, String(item.result.raw_text).slice(0, 1500));
+        }
+      }
+      results.push(...mapped);
     }
 
     return results;
@@ -421,6 +481,8 @@ class AEOOrchestrator {
 
     logger.debug('Executing task', { executionId, modelId, turnIndex: turn.turnIndex, ragEnabled });
 
+    this._currentTaskKey = `${promptSession?.sessionId}::${modelId}::${usePlaywright ? 'web_ui' : 'api'}::${ragEnabled ? 'rag' : 'base'}`;
+    this._currentModelId = modelId;
     const messages = this.buildMessages(promptSession, turn, ragEnabled);
     const modelConfig = provider.modelConfig;
     const temperature = this.config.execution.temperature || 0.15;
@@ -442,14 +504,20 @@ class AEOOrchestrator {
           return await provider.instance.chat(messages, {
             model: modelConfig.model_id,
             temperature,
-            max_tokens: this.config.execution.max_tokens || modelConfig.max_tokens,
+            // P0 FIX: model registry max_tokens is CONTEXT window (128k-1M). Sending it as
+            // max_output_tokens causes 400s / runaway bills. Cap completion tokens at 4096.
+            max_tokens: Math.min(this.config.execution.max_tokens || modelConfig.max_tokens || 1024, 4096),
             top_p: this.config.execution.top_p || 0.9,
-            seed: modelConfig.supports_seed ? 42 : undefined,
-            search_enabled: ragEnabled && modelConfig.supports_web_search,
-            tool_choice: 'auto',
+            // P0 FIX: fixed seed:42 destroys repeat-variance measurement. Only seed when
+            // volatility is disabled AND deterministic runs are explicitly requested.
+            seed: (modelConfig.supports_seed && !this.config.execution?.volatility?.enabled && this.config.execution?.deterministic === true) ? 42 : undefined,
+            // P0 FIX: RAG-off twin must be a TRUE memory baseline. Perplexity always
+            // searches server-side, so force tool_choice:none + search_enabled:false.
+            search_enabled: ragEnabled ? Boolean(modelConfig.supports_web_search) : false,
+            tool_choice: ragEnabled ? (this.config.execution?.search_options?.tool_choice || 'auto') : 'none',
             allowed_domains: this.config.execution?.search_options?.allowed_domains || [],
             search_context_size: this.config.execution?.search_options?.search_context_size || 'medium',
-            geo: this.config.execution?.geo?.default_country || undefined,
+            geo: promptSession?.geo || this.config.execution?.geo?.default_country || undefined,
             stream: false
           });
         });
@@ -463,6 +531,12 @@ class AEOOrchestrator {
       });
     }
 
+    let fanoutLocal = [];
+    try {
+      const { fanoutSubqueries } = await import('./utils/fanout.js');
+      fanoutLocal = fanoutSubqueries(turn.prompt, { maxSub: 6 });
+    } catch { fanoutLocal = []; }
+
     const extracted = this.responseExtractor.extract(response, {
       modelId,
       turnIndex: turn.turnIndex,
@@ -472,7 +546,16 @@ class AEOOrchestrator {
       entityConfig: this.config.entityMaps
     });
 
-    this.costTracker.track(modelConfig, response);
+    this.costTracker.track(modelConfig, response, { serpCalls: provider.name === 'microsoft' || provider.name === 'google-serp' || provider.name === 'ai-mode' ? 1 : 0 });
+
+    // Fan-out join: provider-reported queries (engine truth) + local decomposition
+    // (labeled, never disguised). Powers the rerank + volatility analysis.
+    const providerFanout = response.fanout_queries || response.hidden_search_queries || [];
+    extracted.fanout_queries = [
+      ...providerFanout.map((q) => (typeof q === 'string' ? { query: q, origin: 'provider_reported' } : q)),
+      ...fanoutLocal,
+    ];
+    extracted.geo = promptSession?.geo || this.config.execution?.geo?.default_country || 'us';
 
     return extracted;
   }
@@ -485,11 +568,22 @@ class AEOOrchestrator {
       messages.push({ role: 'system', content: persona.system_instruction_bias });
     }
 
+    // Chained history: prefer live cache (real assistant output from this run), fall back
+    // to any pre-seeded context.responsePreview on the turn definition.
+    const histKey = `${promptSession?.sessionId}::${this._currentModelId || ''}`;
     for (let i = 0; i < turn.turnIndex; i++) {
       messages.push({ role: 'user', content: promptSession.turns[i].prompt });
-      if (i < turn.turnIndex && promptSession.turns[i].context?.responsePreview) {
-        messages.push({ role: 'assistant', content: promptSession.turns[i].context.responsePreview });
+      let preview = promptSession.turns[i].context?.responsePreview || null;
+      if (this._historyCache) {
+        for (const [key, turns] of this._historyCache) {
+          if (key.startsWith(`${promptSession?.sessionId}::`) && turns.has(i)) {
+            // Match the same model+channel+rag lane when possible.
+            if (!this._currentTaskKey || key === this._currentTaskKey) { preview = turns.get(i); break; }
+            preview = preview || turns.get(i);
+          }
+        }
       }
+      if (preview) messages.push({ role: 'assistant', content: preview });
     }
 
     messages.push({ role: 'user', content: turn.prompt });
@@ -544,6 +638,7 @@ class AEOOrchestrator {
       channel: r.usePlaywright ? 'web_ui' : 'api',
       hidden_search_queries: r.result?.hidden_search_queries || [],
       fanout_queries: r.result?.fanout_queries || [],
+      geo: r.result?.geo || r.promptSession?.geo || 'us',
       search_performed: r.result?.search_performed || false,
       search_requested: r.result?.search_requested ?? r.ragEnabled,
       ungrounded: r.result?.ungrounded || false,
@@ -571,12 +666,13 @@ class AEOOrchestrator {
     // Persist raw provider responses for audit.
     for (const r of results) {
       if (r.result?.raw_response) {
+        const priv = privacyFlags(this.config);
         try {
           persistRawResponse(this.runDir, {
             executionId: r.executionId,
             provider: r.provider?.name,
             raw: r.result.raw_response
-          });
+          }, { hashOnly: priv.hashOnlyRaw, redact: priv.redactPersisted });
         } catch (err) {
           logger.warn('Failed to persist raw response', { executionId: r.executionId, error: err.message });
         }
@@ -715,7 +811,9 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// P0 FIX: import.meta.url === 'file://...' string compare breaks on Windows
+// (backslashes / drive letters). Use pathToFileURL for a canonical comparison.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 

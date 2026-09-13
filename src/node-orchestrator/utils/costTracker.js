@@ -15,7 +15,8 @@ export class BudgetExceededError extends Error {
 }
 
 export class CostTracker {
-  constructor(config) {
+  static SERP_COST_PER_CALL_USD = 0.005;
+  constructor(config, { runId = null } = {}) {
     this.config = config;
     this.tracking = config.execution?.cost_tracking?.enabled ?? true;
     this.dailyBudget = config.execution?.cost_tracking?.daily_budget_usd || 500;
@@ -25,14 +26,34 @@ export class CostTracker {
     this.costByModel = {};
     this.costByProvider = {};
     this.costByPersona = {};
+    this.runId = runId;
     this.sessionCostFile = join(ROOT_DIR, 'data', 'output', 'cost_session.json');
     this.loadExistingSession();
   }
 
+  /** P0 FIX: start a fresh ledger per runId so a stale cost_session.json from a
+   *  previous run can't false-trip BudgetExceeded on run #2. */
+  reset(runId = null) {
+    this.costs = [];
+    this.totalCost = 0;
+    this.costByModel = {};
+    this.costByProvider = {};
+    this.costByPersona = {};
+    this.runId = runId;
+    this.saveSession();
+  }
+
   loadExistingSession() {
+    // P0 FIX: only resume a session file that belongs to THIS runId and is fresh
+    // (<24h). Otherwise start at $0 — a stale file must never block a new run.
     if (existsSync(this.sessionCostFile)) {
       try {
         const data = JSON.parse(readFileSync(this.sessionCostFile, 'utf8'));
+        const ageMs = Date.now() - Date.parse(data.lastUpdated || 0);
+        const sameRun = this.runId && data.runId && data.runId === this.runId;
+        if (sameRun || ageMs < 0 || Number.isNaN(ageMs) || ageMs > 24 * 3600 * 1000) {
+          if (!sameRun) return; // stale or foreign run -> fresh ledger
+        }
         this.totalCost = data.totalCost || 0;
         this.costByModel = data.costByModel || {};
         this.costByProvider = data.costByProvider || {};
@@ -43,7 +64,7 @@ export class CostTracker {
     }
   }
 
-  track(modelConfig, response) {
+  track(modelConfig, response, { serpCalls = 0 } = {}) {
     if (!this.tracking) return;
 
     const usage = response.usage || {};
@@ -52,7 +73,13 @@ export class CostTracker {
 
     const inputCost = (inputTokens / 1000) * (modelConfig.cost_per_1k_input || 0);
     const outputCost = (outputTokens / 1000) * (modelConfig.cost_per_1k_output || 0);
-    const totalCost = inputCost + outputCost;
+    // P0 FIX: account Grok's self-reported search cost + SERP API per-call cost ($0.005),
+    // both previously ignored (spend under-reported).
+    const searchCost = Number(usage.search_cost ?? usage.search_cost_usd ?? 0) || 0;
+    const serpCost = serpCalls * CostTracker.SERP_COST_PER_CALL_USD +
+      (Number(response.serp_surface || response.serp_calls || 0) > 0 && (modelConfig.cost_per_1k_input || 0) === 0
+        ? CostTracker.SERP_COST_PER_CALL_USD : 0);
+    const totalCost = inputCost + outputCost + searchCost + serpCost;
 
     this.totalCost += totalCost;
 
@@ -69,6 +96,8 @@ export class CostTracker {
       outputTokens,
       inputCost,
       outputCost,
+      searchCost: Number(response.usage?.search_cost ?? response.usage?.search_cost_usd ?? 0) || 0,
+      serpCost: totalCost - inputCost - outputCost - (Number(response.usage?.search_cost ?? response.usage?.search_cost_usd ?? 0) || 0),
       totalCost,
       timestamp: new Date().toISOString()
     });
@@ -139,6 +168,7 @@ export class CostTracker {
   saveSession() {
     try {
       writeFileSync(this.sessionCostFile, JSON.stringify({
+        runId: this.runId,
         totalCost: this.totalCost,
         costByModel: this.costByModel,
         costByProvider: this.costByProvider,

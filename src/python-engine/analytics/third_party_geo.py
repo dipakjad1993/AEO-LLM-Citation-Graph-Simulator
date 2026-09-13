@@ -104,14 +104,33 @@ class ThirdPartyDominance:
                                      'earned_share': round(earned / total, 4)}
         if earned / total > 0.8:
             result['findings'].append(f'{earned/total:.0%} of citations are earned media (third-party) — your site alone cannot win SoMV. Prioritize reviews/social/analyst outreach.')
-        # Outreach briefs for top packs where brand is absent
-        for pack, info in list(result['by_pack'].items())[:4]:
+        # Outreach briefs for top packs where brand is absent — platform-specific
+        # (video/UGC weights are ENGINE-SPECIFIC: Gemini/YouTube, Perplexity/Reddit,
+        # Claude/reviews 2-4x). Each brief names the engine that over-weights the pack.
+        PACK_PLAYBOOK = {
+            'youtube': ('Gemini cites YouTube ~9.5% + Google-owned ~22.8%: publish 3-8 min explainers with chapters + transcripts; target queries where Gemini leads SoMV.',
+                        'Publish comparison/demo video + pinned comment with canonical facts link.'),
+            'reddit': ('Perplexity cites Reddit ~6.6% (82% Google overlap): earn — do not astroturf — expert answers in 2-3 relevant subreddits; disclose affiliation.',
+                       'Answer the exact money-question threads; link the facts page once, in context.'),
+            'reviews': ('Claude weights review domains 2-4x + longest freshness window: review-generation program (post-purchase email, G2/Capterra/Trustpilot) + respond to every negative within 48h.',
+                        'Seed 10+ detailed reviews quoting your differentiators verbatim (quotable 40-60w lines).'),
+            'analyst': ('Analyst/press (Gartner, TechCrunch, NYT/Atlantic/NPR cluster for Claude): briefing + data study the analyst can cite.',
+                        'Pitch one proprietary data point per quarter; get the facts-page URL into the piece.'),
+            'official': ('Official docs/forums: your own docs + community answers are citable inventory — keep them snippet-eligible and fresh (<90d).',
+                         'Ship /facts/* pages with FAQ schema answering each money question in 20-40 words.'),
+        }
+        for pack, info in list(result['by_pack'].items())[:6]:
             if pack in ('other',):
                 continue
             members = ', '.join(VERTICAL_PACKS.get(pack, [])[:3])
+            why, action = PACK_PLAYBOOK.get(pack, ('Third-party pack drives grounded citations.',
+                                                  'Seed expert answers/listings/quotes; link back to canonical facts pages.'))
+            # Which engine family over-weights this pack most?
+            top_fam = max(ENGINE_VERTICAL_WEIGHTS.items(), key=lambda kv: kv[1].get(pack, 0))[0]
             result['outreach_briefs'].append({
                 'pack': pack, 'citations': info['citations'],
-                'brief': f'Pack "{pack}" drives {info["share"]:.0%} of citations ({members}). Action: seed expert answers/listings/quotes on {members}; link back to canonical facts pages.',
+                'over_weighted_by': top_fam,
+                'brief': f'Pack "{pack}" drives {info["share"]:.0%} of citations ({members}); over-weighted by {top_fam}. WHY: {why} ACTION: {action}',
             })
         result['status'] = 'measured' if total > 1 else 'no_citations'
         return result

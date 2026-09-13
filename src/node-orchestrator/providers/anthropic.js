@@ -24,7 +24,8 @@ export class AnthropicProvider {
   }
 
   async chat(messages, options = {}) {
-    const { model = 'claude-sonnet-4-20250514', temperature = 0.15, max_tokens = 4096, search_enabled, allowed_domains = [] } = options;
+    // Late-2026 refresh: web_search_20260209 supersedes 20250305; supports user_location.
+    const { model = 'claude-sonnet-4-20250514', temperature = 0.15, max_tokens = 4096, search_enabled, allowed_domains = [], geo = null } = options;
 
     let systemMessage = '';
     const apiMessages = [];
@@ -37,10 +38,14 @@ export class AnthropicProvider {
     if (systemMessage) body.system = systemMessage;
     const hiddenQueries = [];
     if (search_enabled) {
-      const tool = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 };
-      if (allowed_domains?.length) tool.allowed_search_results = allowed_domains.map(d => ({ domain: d }));
+      const toolType = process.env.ANTHROPIC_SEARCH_TOOL || 'web_search_20260209';
+      const tool = { type: toolType, name: 'web_search', max_uses: 5 };
+      if (allowed_domains?.length) tool.allowed_search_results = allowed_domains.map(d => ({ type: 'domain', domain: d }));
+      if (geo) tool.user_location = { type: 'approximate', country: String(geo).toUpperCase().slice(0, 2) };
       body.tools = [tool];
       body.tool_choice = { type: 'auto' };
+    } else {
+      body.tool_choice = { type: 'none' };
     }
 
     const response = await this.client.messages.create(body);

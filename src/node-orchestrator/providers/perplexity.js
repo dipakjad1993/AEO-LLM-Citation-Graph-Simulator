@@ -12,7 +12,10 @@ export class PerplexityProvider {
   }
 
   async chat(messages, options = {}) {
-    const { model = 'sonar-pro', temperature = 0.15, max_tokens = 4096, top_p = 0.9, search_enabled } = options;
+    // P0 FIX: search_requested must reflect options.search_enabled, not hardcoded true.
+    // NOTE: Perplexity's Sonar API always retrieves server-side; when search_enabled=false
+    // we still report requested:false and mark the twin contaminated so SoMV can exclude it.
+    const { model = 'sonar-pro', temperature = 0.15, max_tokens = 4096, top_p = 0.9, search_enabled = true } = options;
     const body = {
       model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
@@ -40,8 +43,9 @@ export class PerplexityProvider {
       related_questions: data.related_questions || [],
       hidden_search_queries: [],
       search_performed: Boolean(searchPerformed),
-      search_requested: true,
-      ungrounded: !searchPerformed,
+      search_requested: Boolean(search_enabled),
+      search_contaminated_baseline: search_enabled === false && searchPerformed,
+      ungrounded: Boolean(search_enabled) && !searchPerformed,
       raw_response: data
     };
   }

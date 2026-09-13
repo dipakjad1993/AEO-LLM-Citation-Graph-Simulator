@@ -33,7 +33,9 @@ class CitationGraphBuilder:
         self.graph_config = config.get('analytics', {}).get('graph', {})
         self.entity_config = config.get('entity_maps', {}).get('entity_maps', {})
         self.directed = self.graph_config.get('directed', True)
-        self.min_edge_weight = self.graph_config.get('min_edge_weight', 2)
+        configured = self.graph_config.get('min_edge_weight', 2)
+        self._configured_min_edge = configured
+        self.min_edge_weight = configured
         self.max_nodes = self.graph_config.get('max_graph_nodes', 10000)
         self.authority_domains = {}
         for source in self.entity_config.get('external_authority_sources', []):
@@ -96,7 +98,11 @@ class CitationGraphBuilder:
                     G[model_node][source_node]['weight'] += 1
                 else:
                     G.add_edge(model_node, source_node, weight=1)
-        self._filter_low_weight_edges(G)
+        try:
+            n_resp = len(df)
+        except Exception:
+            n_resp = 0
+        self._filter_low_weight_edges(G, n_resp)
         logger.info(f"Citation graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         return G
 
@@ -233,8 +239,17 @@ class CitationGraphBuilder:
         except Exception as e:
             logger.warning(f"Community detection failed: {e}")
 
-    def _filter_low_weight_edges(self, G: nx.Graph):
-        edges_to_remove = [(u, v) for u, v, d in G.edges(data=True) if d.get('weight', 0) < self.min_edge_weight]
+    def _effective_min_edge(self, n_responses: int) -> int:
+        if n_responses < 20:
+            return 1
+        try:
+            return max(int(self._configured_min_edge), max(2, n_responses // 50))
+        except Exception:
+            return 2
+
+    def _filter_low_weight_edges(self, G: nx.Graph, n_responses: int = 0):
+        floor = self._effective_min_edge(n_responses)
+        edges_to_remove = [(u, v) for u, v, d in G.edges(data=True) if d.get('weight', 0) < floor]
         G.remove_edges_from(edges_to_remove)
 
     def get_stats(self, graphs: Dict[str, nx.Graph]) -> Dict:

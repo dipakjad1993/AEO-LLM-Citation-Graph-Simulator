@@ -59,17 +59,25 @@ def _token_stems(text: str) -> set:
 
 
 def _lexical_similarity(a: str, b: str) -> float:
-    """Containment-based lexical similarity (symmetric via the smaller set).
+    """Containment-based lexical similarity with a length-normalized guard.
 
-    Defined as |A ∩ B| / min(|A|, |B|) over stemmed tokens, so short
-    ground-truth passages ("SOC 2 certified") embedded in a longer claim are
-    detected as strong matches, while long claims are not penalised.
-    """
+    Base: |A ∩ B| / min(|A|, |B|) over stemmed tokens, so short ground-truth
+    passages ("SOC 2 certified") embedded in a longer claim still match.
+    P0 FIX: pure containment over-matches tiny GT (2-token "SOC 2" matches any
+    claim mentioning SOC). When the smaller side has <4 stems we additionally
+    require Jaccard (|A ∩ B| / |A ∪ B|) >= 0.18, else cap the score at 0.41
+    (below the partial threshold) so 2-token coincidences stay UNVERIFIED."""
     sa = _token_stems(a)
     sb = _token_stems(b)
     if not sa or not sb:
         return 0.0
-    return len(sa & sb) / min(len(sa), len(sb))
+    inter = len(sa & sb)
+    containment = inter / min(len(sa), len(sb))
+    if min(len(sa), len(sb)) < 4:
+        jaccard = inter / max(len(sa | sb), 1)
+        if jaccard < 0.18:
+            return min(containment, 0.41)
+    return containment
 
 
 class _Embedder:

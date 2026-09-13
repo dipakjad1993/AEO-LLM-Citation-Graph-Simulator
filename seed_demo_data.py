@@ -52,6 +52,7 @@ def main():
                     cites = [{'url': f'https://{d}/demo-article-{eid}', 'title': d, 'snippet': 'demo citation'} for d in random.sample(DOMAINS, 2)] if grounded else []
                     rows.append({
                         'executionId': f'demo-{eid}', 'promptSessionId': sess, 'personaId': persona,
+                        'demo_synthetic': True, 'synthetic_reason': 'seed_demo_data.py keyless demo corpus — never prod evidence',
                         'modelId': model, 'provider': model.split('-')[0], 'turnIndex': turn_idx, 'turnType': turn,
                         'prompt': f'Demo prompt {turn} {pi}', 'ragEnabled': grounded,
                         'channel': 'api', 'search_performed': grounded, 'search_requested': True,
@@ -73,9 +74,14 @@ def main():
         json.dump(rows, f, indent=2)
     print(f'Seeded {len(rows)} demo rows -> {exdir / "all_results.json"}')
     if '--run' in sys.argv:
+        import os
         import subprocess
+        # Explicit opt-in: the demo corpus is labelled demo_synthetic and the prod
+        # loader quarantines such rows UNLESS AEO_ALLOW_SYNTHETIC=1. The demo sets it
+        # for its own run only — real run_* dirs never get this flag.
+        env = dict(os.environ, AEO_ALLOW_SYNTHETIC='1')
         r = subprocess.run([sys.executable, str(ROOT / 'src' / 'python-engine' / 'main.py'), '--run-dir', str(run_dir)],
-                           cwd=str(ROOT))
+                           cwd=str(ROOT), env=env)
         sys.exit(r.returncode)
 
 

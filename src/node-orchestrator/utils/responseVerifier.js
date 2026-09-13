@@ -139,7 +139,9 @@ async function checkUrlOnline(url, { timeoutMs = 15000, maxRedirects = 5 } = {})
 
       result.final_url = current;
       result.content_type = response.headers.get('content-type');
-      result.verified = response.ok || response.status < 500; // 4xx = resolved but missing; 2xx/3xx-final = valid
+      // P0 FIX: 404/410/451 are NOT verified — the cited page does not exist (or is
+      // censored). Only 2xx-3xx final URLs count. Old code counted 404 as verified.
+      result.verified = response.status >= 200 && response.status <= 399;
       if (!result.verified) result.error = `HTTP ${response.status}`;
       break;
     }
@@ -253,7 +255,16 @@ export class ResponseVerifier {
           unverified: total - verifiedCount,
           checked: this.online
         },
-        passed: p.quality.enforced && (total === 0 || verifiedCount > 0 || !this.config?.execution?.verification?.require_verified_citations)
+        // P0 FIX: fail CLOSED when require_verified_citations=true AND online checks ran:
+        // zero citations can no longer pass vacuously (old: total===0 -> passed) and every
+        // cited URL must return 2xx-3xx. Offline/skipped checks can never satisfy the gate
+        // (fail closed: required-but-unchecked = fail). Default path (require=false)
+        // preserves legacy semantics so offline runs keep working.
+        passed: p.quality.enforced && (
+          this.config?.execution?.verification?.require_verified_citations
+            ? (this.online && total > 0 && verifiedCount === total)
+            : (total === 0 || verifiedCount > 0 || !this.config?.execution?.verification?.require_verified_citations)
+        )
       };
       p.item.result.citations = p.onlineChecks.map(c => ({
         url: c.url,

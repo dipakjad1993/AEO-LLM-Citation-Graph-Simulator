@@ -7,10 +7,17 @@
     "prompt_count": 50,
     "max_concurrent_api": 10,
     "max_concurrent_playwright": 3,
+    "max_calls_per_run": 2500,
+    "deterministic": false,
     "request_timeout_ms": 120000,
     "temperature": 0.15,
     "top_p": 0.9,
-    "max_tokens": 4096,
+    "max_tokens": 1024,
+    "privacy": {
+      "redact_pii": true,
+      "hash_only_raw": false,
+      "description": "redact_pii scrubs emails/secrets from persisted raw copies. hash_only_raw stores content_hash + 500-char redacted preview instead of full plaintext (audit-safe, PII-free)."
+    },
     "search_options": {
       "tool_choice": "auto",
       "allowed_domains": [],
@@ -26,7 +33,7 @@
     "geo": {
       "default_country": "us",
       "countries": ["us"],
-      "description": "Replicate money prompts per country for multi-country tracking (Peec Advanced pattern)."
+      "description": "Multi-country matrix (Peec Advanced pattern): prompt budget is SPLIT across countries (cost-flat), each session tagged with geo, EU-vs-US leader split in geo_temporal. Add e.g. [us, uk, de] + LocalBusiness/GBP per locale."
     },
     "scheduler": {
       "enabled": false,
@@ -56,7 +63,11 @@
       "google": { "rpm": 60, "tpm": 32000 },
       "perplexity": { "rpm": 200, "tpm": 200000 },
       "deepseek": { "rpm": 1000, "tpm": 100000 },
-      "xai": { "rpm": 200, "tpm": 200000 }
+      "xai": { "rpm": 200, "tpm": 200000 },
+      "serp": { "rpm": 60, "tpm": 32000 },
+      "microsoft": { "rpm": 60, "tpm": 32000 },
+      "google-serp": { "rpm": 60, "tpm": 32000 },
+      "ai-mode": { "rpm": 60, "tpm": 32000 }
     },
     "cost_tracking": {
       "enabled": true,

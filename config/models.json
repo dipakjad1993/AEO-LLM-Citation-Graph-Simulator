@@ -12,7 +12,7 @@
         "api": "responses",
         "supports_web_search": true,
         "supports_seed": true,
-        "search_context_size": "128k",
+        "search_context_size": "high",
         "max_tokens": 128000,
         "cost_per_1k_input": 0.005,
         "cost_per_1k_output": 0.015,
@@ -38,7 +38,7 @@
         "api": "chat_completions",
         "supports_web_search": true,
         "supports_seed": true,
-        "search_context_size": "128k",
+        "search_context_size": "high",
         "max_tokens": 128000,
         "cost_per_1k_input": 0.004,
         "cost_per_1k_output": 0.012,
@@ -66,7 +66,7 @@
         "temperature_range": [0, 1],
         "supports_system_message": true,
         "api_endpoint": "https://api.anthropic.com/v1/messages",
-        "search_tool": { "type": "web_search_20250305", "name": "web_search", "max_uses": 5 },
+        "search_tool": { "type": "web_search_20260209", "name": "web_search", "max_uses": 5, "fallback_type": "web_search_20250305" },
         "citation_adapter": "anthropic_web_search_tool_result"
       },
       "claude-4-opus": {
@@ -84,7 +84,7 @@
         "temperature_range": [0, 1],
         "supports_system_message": true,
         "api_endpoint": "https://api.anthropic.com/v1/messages",
-        "search_tool": { "type": "web_search_20250305", "name": "web_search", "max_uses": 5 },
+        "search_tool": { "type": "web_search_20260209", "name": "web_search", "max_uses": 5, "fallback_type": "web_search_20250305" },
         "citation_adapter": "anthropic_web_search_tool_result"
       }
     },
@@ -242,6 +242,18 @@
         "citation_adapter": "serp_aio_citations"
       }
     }
+  },
+  "late_2026_candidates": {
+    "_notice": "UNVERIFIED registry candidates — model_ids NOT confirmed against provider docs. scheduled:false: the orchestrator will NOT query them until you verify the exact model_id and flip scheduled:true. Costs marked estimated:true are placeholders, never billed math.",
+    "gemini-3-1-flash": { "model_id": "gemini-3.1-flash", "provider": "google", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.0001, "cost_per_1k_output": 0.0004, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 1000000, "note": "Verify id at ai.google.dev before enabling." },
+    "gemini-3-5-flash": { "model_id": "gemini-3.5-flash", "provider": "google", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.0001, "cost_per_1k_output": 0.0004, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 1000000 },
+    "gemini-3-omni": { "model_id": "gemini-3-omni", "provider": "google", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.001, "cost_per_1k_output": 0.005, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 1000000 },
+    "claude-sonnet-4-6": { "model_id": "claude-sonnet-4-6-20260201", "provider": "anthropic", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.003, "cost_per_1k_output": 0.015, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 200000, "note": "Verify id at docs.anthropic.com before enabling." },
+    "claude-opus-4-7": { "model_id": "claude-opus-4-7-20260201", "provider": "anthropic", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.015, "cost_per_1k_output": 0.075, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 200000 },
+    "grok-4-1": { "model_id": "grok-4-1", "provider": "xai", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.003, "cost_per_1k_output": 0.015, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 131072 },
+    "grok-5": { "model_id": "grok-5", "provider": "xai", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.004, "cost_per_1k_output": 0.02, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 200000 },
+    "gpt-5-6": { "model_id": "gpt-5.6", "provider": "openai", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.005, "cost_per_1k_output": 0.015, "estimated": true, "supports_web_search": true, "supports_seed": true, "max_tokens": 128000, "note": "Sol/Terra/Luna variant ids unconfirmed — verify at platform.openai.com before enabling." },
+    "perplexity-agent": { "model_id": "perplexity-agent", "provider": "perplexity", "scheduled": false, "registry_status": "unverified", "cost_per_1k_input": 0.003, "cost_per_1k_output": 0.015, "estimated": true, "supports_web_search": true, "supports_seed": false, "max_tokens": 200000, "note": "Agent API migration path if Sonar chat endpoints are retired — verify at docs.perplexity.ai." }
   },
   "deprecated": {
     "_notice": "Shut down or superseded. Retained so old runs still validate; orchestrator refuses to schedule them by default.",

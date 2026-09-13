@@ -17,21 +17,50 @@ import json
 import logging
 import re
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse, urljoin
 
 logger = logging.getLogger(__name__)
 
+SITE_AUDIT_UA = 'Mozilla/5.0 (compatible; AEO-Simulator/2.0; +site-audit)'
+
+
+@lru_cache(maxsize=64)
+def _fetch_cached(url: str, timeout: int = 12) -> str:
+    import json as _j
+    fetched = _fetch(url, timeout=timeout)
+    return _j.dumps(fetched, default=str)
+
 
 def _fetch(url: str, timeout: int = 12) -> Optional[Dict[str, Any]]:
+    import json as _j
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'AEO-Simulator/1.0 (+site-audit)'})
+        req = urllib.request.Request(url, headers={'User-Agent': SITE_AUDIT_UA})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read(500000).decode('utf-8', 'ignore')
+            raw = resp.read(1000000)
+            try:
+                body = raw.decode('utf-8')
+            except UnicodeDecodeError:
+                body = raw.decode('utf-8', 'ignore')
             return {'html': body, 'status': resp.status, 'headers': dict(resp.headers)}
     except Exception as e:
         return {'error': str(e)}
+
+
+def _fetch_many(urls, timeout=12, workers=4):
+    import json as _j
+    out = {}
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_fetch_cached, u, timeout): u for u in urls}
+        for f, u in futs.items():
+            try:
+                out[u] = _j.loads(f.result())
+            except Exception as e:
+                out[u] = {'error': str(e)}
+    return out
 
 
 def _strip_tags(html: str) -> str:
@@ -58,7 +87,9 @@ class SiteAuditor:
             result['message'] = 'Set your_brand.website in entity_maps.json to enable the technical site audit.'
             return result
         pages = [self.website] + [urljoin(self.website + '/', p.lstrip('/')) for p in self.audit_cfg.get('extra_pages', [])[:5]]
-        page_results = [self.audit_page(u) for u in pages]
+        import json as _j
+        prefetched = _fetch_many(pages, workers=self.audit_cfg.get('fetch_workers', 4))
+        page_results = [self.audit_page(u, prefetched=u and prefetched.get(u)) for u in pages]
         result['pages'] = page_results
         ok = [p for p in page_results if not p.get('error')]
         if not ok:
@@ -81,9 +112,9 @@ class SiteAuditor:
         result['status'] = 'audited'
         return result
 
-    def audit_page(self, url: str) -> Dict[str, Any]:
+    def audit_page(self, url: str, prefetched: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         out: Dict[str, Any] = {'url': url, 'checks': {}, 'findings': [], 'fixes': []}
-        fetched = _fetch(url)
+        fetched = prefetched if prefetched is not None else _fetch(url)
         if not fetched or 'error' in fetched:
             out['error'] = (fetched or {}).get('error', 'fetch failed')
             return out
