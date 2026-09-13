@@ -8,6 +8,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname) + path.sep;
 const PORT = Number(process.env.PORT || 3000);
+// Bind address: loopback by default (dev-safe). PaaS/Docker must set HOST=0.0.0.0
+// (Render/Fly/Run inject PORT and probe 0.0.0.0 — loopback => "No open ports detected").
+const HOST = process.env.HOST || '127.0.0.1';
 
 // ─── Security config ──────────────────────────────────────────────
 const AUTH_TOKEN = process.env.AEO_AUTH_TOKEN || '';
@@ -448,6 +451,12 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // Health check (Render/Docker probes; no auth required)
+    if (url.pathname === '/api/health' && req.method === 'GET') {
+      jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString() });
+      return;
+    }
+
     // Allow-listed static files only
     if (req.method === 'GET') {
       for (const s of STATIC_ALLOW) {
@@ -479,8 +488,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
-  log(`Server started on http://localhost:${PORT} (loopback only)`);
+server.listen(PORT, HOST, () => {
+  log(`Server started on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${HOST === '127.0.0.1' ? ' (loopback only — set HOST=0.0.0.0 in Docker/PaaS)' : ''}`);
   console.log(`\n  AEO & LLM Citation Graph Simulator`);
   console.log(`  http://localhost:${PORT}\n`);
 });

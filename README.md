@@ -156,6 +156,21 @@ docker compose up        # node:20 + python3.11 + en_core_web_sm pre-baked, ./da
 # docker includes requirements-lite; mount a .env with keys for real runs
 ```
 
+### Path D — Render.com (Blueprint)
+
+`render.yaml` is included: New → Blueprint → point at the repo. Notes from real deploy logs:
+
+- The container **must** bind `0.0.0.0:$PORT` — the image sets `HOST=0.0.0.0` and the server reads
+  Render's injected `PORT`. (Binding loopback is why deploys fail with *"No open ports detected"*.)
+- Health check is `/api/health` (no auth required; all other `/api/*` routes use `AEO_AUTH_TOKEN`,
+  which the blueprint auto-generates — copy it from the dashboard into your client).
+- The `pip install` download lines (`yarl`, `contourpy`, …) are normal build output, not errors.
+- `spacy` ships in `requirements-lite.txt`, so `en_core_web_sm` pre-bakes into the image; embeddings
+  and transformer sentiment intentionally use the **offline fallbacks** (MiniLM/keyword) on PaaS —
+  full torch/transformers needs the heavy `requirements.txt` and a paid instance (RAM/disk).
+- Add provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SERP_API_KEY`, …) as Render env vars —
+  never commit them.
+
 **Requirements:** Node ≥20, Python 3.11 (3.9+ works), ~200MB for lite install (no torch/transformers/UMAP/HDBSCAN;
 Windows-safe). Full ML extras via `pip install -r requirements.txt` (lazy-loaded, opt-in).
 

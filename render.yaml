@@ -1,0 +1,20 @@
+# Render.com blueprint — one-click deploy of the AEO Simulator (Docker).
+# https://render.com/docs/blueprint-spec
+# The web service reuses the Dockerfile; Render injects $PORT automatically.
+services:
+  - type: web
+    name: aeo-simulator
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: AEO_AUTH_TOKEN
+        generateValue: true
+      - key: LOG_LEVEL
+        value: info
+      # Add your provider keys in the Render dashboard (never commit them):
+      # OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY,
+      # PERPLEXITY_API_KEY, DEEPSEEK_API_KEY, XAI_API_KEY,
+      # SERP_API_KEY, SERP_PROVIDER, SLACK_WEBHOOK_URL
