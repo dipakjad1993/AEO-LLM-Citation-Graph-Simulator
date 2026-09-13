@@ -1,5 +1,5 @@
 FROM node:20-slim AS base
-ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_BREAK_SYSTEM_PACKAGES=1
 # Containers must bind all interfaces: Render/Fly/Cloud Run inject $PORT and probe 0.0.0.0.
 ENV HOST=0.0.0.0
 ENV PORT=3000
