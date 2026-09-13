@@ -2,6 +2,10 @@
 
 ### The open, auditable, technical-SEO source of truth for AI search. Local-first. No black boxes. Every number traces to a real response.
 
+> **🚀 Live demo: https://aeo-llm-citation-graph-simulator-1.onrender.com/** — try the hosted tool in your
+> browser, no install needed. (For private/real tracking runs, deploy your own instance — see Path D below —
+> and set `AEO_AUTH_TOKEN` plus your provider keys.)
+
 <p>
   <img alt="Node 20" src="https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white">
   <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white">
@@ -157,6 +161,8 @@ docker compose up        # node:20 + python3.11 + en_core_web_sm pre-baked, ./da
 ```
 
 ### Path D — Render.com (Blueprint)
+
+**Live instance: https://aeo-llm-citation-graph-simulator-1.onrender.com/**
 
 `render.yaml` is included: New → Blueprint → point at the repo. Notes from real deploy logs:
 
