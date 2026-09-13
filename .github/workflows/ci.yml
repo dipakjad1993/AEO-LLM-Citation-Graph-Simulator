@@ -11,8 +11,10 @@ jobs:
         with:
           node-version: 20
       - run: npm ci || npm install
+      # Hermetic unit tests only. testRunner.js is a LOCAL readiness gate
+      # (requires .env + real brand in entity_maps.json) — it can never pass
+      # on a fresh checkout, so it stays in `npm test` for developers, not CI.
       - run: node --test src/node-orchestrator/utils/unitTests.js
-      - run: node src/node-orchestrator/utils/testRunner.js
   python:
     runs-on: ubuntu-latest
     steps:
@@ -22,5 +24,7 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements-lite.txt
       - run: python -m spacy download en_core_web_sm || true
-      - run: python -m pytest src/python-engine/tests/ -q
+      # tests/ holds script-style readiness validators (pytest collects 0 tests
+      # and exits 5) — the real hermetic gate is the eval goldens (exit 1/0).
+      - run: python src/python-engine/tests/test_eval_goldens.py
       - run: python seed_demo_data.py && python src/python-engine/main.py --run-dir data/output/run_demo

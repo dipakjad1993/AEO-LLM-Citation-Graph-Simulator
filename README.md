@@ -459,8 +459,10 @@ npm test
 # testRunner.js + test_pipeline.py (integration)
 ```
 
-- **`.github/workflows/ci.yml`**: Node 20 + Python 3.11 jobs; installs **lite** deps; runs unit, eval,
-  integration, then seeds + runs the full demo pipeline (the strongest CI signal: the product proving itself).
+- **`.github/workflows/ci.yml`**: Node 20 + Python 3.11 jobs; installs **lite** deps; runs unit tests +
+  eval goldens, then seeds + runs the full demo pipeline (the strongest CI signal: the product proving
+  itself). `testRunner.js` / `test_pipeline.py` are local readiness gates (they demand your real `.env` +
+  brand config), so they run via `npm test` on your machine, not in CI.
 - **`src/python-engine/tests/test_eval_goldens.py`** guards methodology invariants so future edits can't
   silently reintroduce fabrication, averaged-engine SoMV, single-door robots logic, or the G_auth shadowing bug.
 

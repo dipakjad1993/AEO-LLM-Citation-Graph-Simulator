@@ -22,6 +22,7 @@
     "validate": "node src/node-orchestrator/utils/testRunner.js",
     "validate:python": "python src/python-engine/tests/test_pipeline.py",
     "test:unit": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py",
+    "test:ci": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_eval_goldens.py",
     "test": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py && python src/python-engine/tests/test_eval_goldens.py && node src/node-orchestrator/utils/testRunner.js && python src/python-engine/tests/test_pipeline.py"
   },
   "dependencies": {
