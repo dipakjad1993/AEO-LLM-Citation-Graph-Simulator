@@ -4,6 +4,8 @@ Creates interactive HTML dashboards with charts, tables, and actionable insights
 Uses Plotly for interactive visualizations and Jinja2 for templating.
 """
 
+from __future__ import annotations  # lazy annotations: go.Figure etc. must not evaluate at import when plotly is absent (lite installs)
+
 import json
 import logging
 from pathlib import Path

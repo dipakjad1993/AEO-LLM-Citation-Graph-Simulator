@@ -62,7 +62,7 @@ def main():
     lo, hi = wilson(0.5, 20)
     check('wilson-ci-bounds', lo < 0.5 < hi and 0 <= lo and hi <= 1, f'({lo},{hi})')
 
-    # 4b. G_auth regression: coefficient variables must not be shadowed by brand loops
+        # 4b. G_auth regression: coefficient variables must not be shadowed by brand loops
     import networkx as nx
     from analytics.enterprise_insights import EnterpriseInsights as _EI
     _e = _EI({'entity_maps': {'entity_maps': {'your_brand': {'primary_name': 'B'}, 'competitors': []}}})
@@ -83,6 +83,23 @@ def main():
     check('registry-2026', 'gpt-5.5' in flat and 'web_search_preview' not in flat.replace('web_search_preview tool type is dead', '').replace('web_search_preview is DEAD', '') or 'gpt-5.5' in flat)
     check('deprecated-block', 'deprecated' in models and 'gpt-4o-search-preview' in json.dumps(models['deprecated']))
     check('api-only-default', json.loads((ROOT / 'config' / 'execution.json').read_text())['execution']['mode'] == 'api_only')
+
+    # 6. Lite-env import guard (the CI red-X root cause): every pipeline module
+    # must import with heavy deps missing (plotly/torch/transformers/umap/...).
+    # Runs in a subprocess so the block doesn't poison this process.
+    import subprocess as _sp
+    _lite_probe = (
+        "import sys; "
+        "sys.modules.update({m: None for m in ['plotly','plotly.graph_objects','plotly.express','plotly.subplots','torch','transformers','sentence_transformers','umap','hdbscan','tiktoken']}); "
+        "sys.path.insert(0, 'src/python-engine'); "
+        "import main, dashboard.generate; print('lite-import OK')"
+    )
+    try:
+        _p = _sp.run([sys.executable, '-c', _lite_probe], cwd=str(ROOT), capture_output=True, text=True, timeout=120)
+        check('lite-import-guard', _p.returncode == 0 and 'lite-import OK' in _p.stdout,
+              (_p.stderr or '')[-500:] or 'subprocess failed')
+    except Exception as ex:
+        check('lite-import-guard', False, str(ex))
 
     fails = [r for r in results if r[1] == FAIL]
     print(f'\n{len(results) - len(fails)}/{len(results)} evals passed.')
