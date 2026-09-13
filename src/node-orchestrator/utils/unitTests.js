@@ -221,4 +221,63 @@ test('validateAllConfigs rejects placeholder keys', () => {
   );
 });
 
+test('validateAllConfigs accepts demo mode without keys', () => {
+  assert.doesNotThrow(() => validateAllConfigs({ env: { AEO_DEMO_MODE: '1' }, requireKeys: true }));
+});
+
+// ── Citation adapters (recorded 2026 fixtures — formats change monthly) ──
+test('ResponseExtractor: grounded vs ungrounded fact detection', async () => {
+  const { ResponseExtractor } = await import('./responseExtractor.js');
+  const ex = new ResponseExtractor();
+  const ctx = (modelId, ragEnabled) => ({ executionId: 'e1', modelId, ragEnabled, turnIndex: 0, turn: { turnType: 'category_discovery' }, promptSession: { sessionId: 's', personaId: 'p' }, entityConfig: {} });
+  // Grounded: citations present
+  const g = ex.extract({ raw_text: 'Acme is best. See https://example.com/a', citations: [{ url: 'https://example.com/a', title: 'A' }], search_performed: true, search_requested: true }, ctx('gpt-5-5', true));
+  assert.equal(g.search_performed, true);
+  assert.equal(g.ungrounded, false);
+  assert.equal(g.grounding, 'grounded');
+  // Unrequested browsing but zero citations = memory answer
+  const u = ex.extract({ raw_text: 'Acme is best from memory.', citations: [], search_performed: false, search_requested: true }, ctx('gpt-5-5', true));
+  assert.equal(u.search_performed, false);
+  assert.equal(u.ungrounded, true);
+  assert.equal(u.grounding, 'ungrounded_memory');
+  // utm_source stripped
+  const utm = ex.extract({ raw_text: 'x https://example.com/a?utm_source=chatgpt.com', citations: [], search_performed: false, search_requested: false }, ctx('demo-model', false));
+  assert.ok(utm.citations[0].url.includes('example.com/a'));
+  assert.ok(!utm.citations[0].url.includes('utm_source'));
+});
+
+test('ResponseExtractor: adapter labels per model family', async () => {
+  const { ResponseExtractor } = await import('./responseExtractor.js');
+  const ex = new ResponseExtractor();
+  const label = (mid) => ex.citationAdapter({}, { modelId: mid });
+  assert.equal(label('gpt-5-5'), 'openai_responses_annotations');
+  assert.equal(label('claude-4-sonnet'), 'anthropic_web_search_tool_result');
+  assert.equal(label('gemini-2-5-pro'), 'gemini_grounding_chunks_resolve_redirect');
+  assert.equal(label('sonar-pro'), 'perplexity_citations_flat');
+  assert.equal(label('grok-4'), 'openai_chat_annotations');
+});
+
+test('OpenAI provider parses Responses API annotations + sources', async () => {
+  const { OpenAIProvider } = await import('../providers/openai.js');
+  const p = new OpenAIProvider('test', {});
+  const out = p.parseResponsesApi({
+    model: 'gpt-5.5', status: 'completed',
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'Acme leads.',
+      annotations: [{ type: 'url_citation', url: 'https://example.com/acme', title: 'Acme' }] }] },
+      { type: 'web_search_call', query: 'best analytics platform' }],
+    sources: [{ url: 'https://example.com/acme', title: 'Acme' }],
+    usage: {}
+  }, { search_enabled: true });
+  assert.equal(out.search_performed, true);
+  assert.equal(out.citations.length, 2); // sources + inline
+  assert.deepEqual(out.hidden_search_queries, ['best analytics platform']);
+});
+
+test('Perplexity provider prefers flat citations[] over regex', async () => {
+  const { PerplexityProvider } = await import('../providers/perplexity.js');
+  const p = new PerplexityProvider('test', {});
+  const { citations } = p.extractCitations('Acme [1] is best', { citations: [{ url: 'https://example.com/a', title: 'A' }] });
+  assert.equal(citations[0].url, 'https://example.com/a');
+});
+
 console.log('Unit tests complete.');

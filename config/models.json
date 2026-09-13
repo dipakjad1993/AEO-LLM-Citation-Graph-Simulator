@@ -1,90 +1,128 @@
 {
+  "_comment": "2026-09 model registry. Legacy 2024 IDs retained under 'deprecated' for migration only. Defaults use current APIs: OpenAI Responses web_search, Anthropic web_search, Gemini 2.5/3 grounding, Grok, Copilot SERP.",
+  "version": "2026.09",
   "models": {
     "openai": {
-      "gpt-4o": {
-        "model_id": "gpt-4o",
-        "display_name": "ChatGPT (GPT-4o)",
+      "gpt-5-5": {
+        "model_id": "gpt-5.5",
+        "display_name": "ChatGPT (GPT-5.5, Responses API + web_search)",
         "provider": "openai",
+        "family": "OpenAI",
+        "surface": "chatgpt_api_grounded",
+        "api": "responses",
         "supports_web_search": true,
         "supports_seed": true,
+        "search_context_size": "128k",
         "max_tokens": 128000,
         "cost_per_1k_input": 0.005,
         "cost_per_1k_output": 0.015,
-        "temperature_range": [0.0, 2.0],
+        "avg_cost_per_answer_usd": 0.035,
+        "temperature_range": [0, 2],
         "supports_system_message": true,
-        "api_endpoint": "https://api.openai.com/v1/chat/completions",
-        "search_enabled_params": {
-          "tools": [{"type": "web_search_preview"}]
-        }
+        "api_endpoint": "https://api.openai.com/v1/responses",
+        "search_tool": { "type": "web_search" },
+        "search_options": {
+          "tool_choice": "auto",
+          "allowed_domains": [],
+          "return_sources": "full_list",
+          "external_web_access": true
+        },
+        "citation_adapter": "openai_responses_annotations"
       },
-      "gpt-4o-mini": {
-        "model_id": "gpt-4o-mini",
-        "display_name": "ChatGPT (GPT-4o-mini)",
+      "gpt-5-search-api": {
+        "model_id": "gpt-5-search-api",
+        "display_name": "ChatGPT Search API (Chat Completions)",
         "provider": "openai",
+        "family": "OpenAI",
+        "surface": "chatgpt_api_grounded",
+        "api": "chat_completions",
         "supports_web_search": true,
         "supports_seed": true,
+        "search_context_size": "128k",
         "max_tokens": 128000,
-        "cost_per_1k_input": 0.00015,
-        "cost_per_1k_output": 0.0006,
-        "temperature_range": [0.0, 2.0],
+        "cost_per_1k_input": 0.004,
+        "cost_per_1k_output": 0.012,
+        "avg_cost_per_answer_usd": 0.03,
+        "temperature_range": [0, 2],
         "supports_system_message": true,
-        "api_endpoint": "https://api.openai.com/v1/chat/completions"
+        "api_endpoint": "https://api.openai.com/v1/chat/completions",
+        "search_tool": { "type": "web_search" },
+        "citation_adapter": "openai_chat_annotations"
       }
     },
     "anthropic": {
-      "claude-3-5-sonnet": {
-        "model_id": "claude-3-5-sonnet-20241022",
-        "display_name": "Claude 3.5 Sonnet",
+      "claude-4-sonnet": {
+        "model_id": "claude-sonnet-4-20250514",
+        "display_name": "Claude 4 Sonnet (web_search tool)",
         "provider": "anthropic",
-        "supports_web_search": false,
+        "family": "Anthropic",
+        "surface": "claude_api_grounded",
+        "supports_web_search": true,
         "supports_seed": false,
         "max_tokens": 200000,
         "cost_per_1k_input": 0.003,
         "cost_per_1k_output": 0.015,
-        "temperature_range": [0.0, 1.0],
+        "avg_cost_per_answer_usd": 0.101,
+        "temperature_range": [0, 1],
         "supports_system_message": true,
-        "api_endpoint": "https://api.anthropic.com/v1/messages"
+        "api_endpoint": "https://api.anthropic.com/v1/messages",
+        "search_tool": { "type": "web_search_20250305", "name": "web_search", "max_uses": 5 },
+        "citation_adapter": "anthropic_web_search_tool_result"
       },
-      "claude-3-opus": {
-        "model_id": "claude-3-opus-20240229",
-        "display_name": "Claude 3 Opus",
+      "claude-4-opus": {
+        "model_id": "claude-opus-4-20250514",
+        "display_name": "Claude 4 Opus (web_search tool)",
         "provider": "anthropic",
-        "supports_web_search": false,
+        "family": "Anthropic",
+        "surface": "claude_api_grounded",
+        "supports_web_search": true,
         "supports_seed": false,
         "max_tokens": 200000,
         "cost_per_1k_input": 0.015,
         "cost_per_1k_output": 0.075,
-        "temperature_range": [0.0, 1.0],
+        "avg_cost_per_answer_usd": 0.18,
+        "temperature_range": [0, 1],
         "supports_system_message": true,
-        "api_endpoint": "https://api.anthropic.com/v1/messages"
+        "api_endpoint": "https://api.anthropic.com/v1/messages",
+        "search_tool": { "type": "web_search_20250305", "name": "web_search", "max_uses": 5 },
+        "citation_adapter": "anthropic_web_search_tool_result"
       }
     },
     "google": {
-      "gemini-1.5-pro": {
-        "model_id": "gemini-1.5-pro",
-        "display_name": "Gemini 1.5 Pro",
+      "gemini-2-5-pro": {
+        "model_id": "gemini-2.5-pro",
+        "display_name": "Gemini 2.5 Pro (grounding + redirect resolver)",
         "provider": "google",
+        "family": "Google",
+        "surface": "gemini_api_grounded",
         "supports_web_search": true,
         "supports_seed": false,
-        "max_tokens": 2000000,
+        "max_tokens": 1000000,
         "cost_per_1k_input": 0.00125,
         "cost_per_1k_output": 0.005,
-        "temperature_range": [0.0, 2.0],
+        "avg_cost_per_answer_usd": 0.002,
+        "temperature_range": [0, 2],
         "supports_system_message": true,
-        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models"
+        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+        "citation_adapter": "gemini_grounding_chunks_resolve_redirect",
+        "citation_note": "groundingChunks[].web.uri are Google redirects — MUST resolve via HEAD before attributing publisher domain"
       },
-      "gemini-2.0-flash": {
-        "model_id": "gemini-2.0-flash",
-        "display_name": "Gemini 2.0 Flash",
+      "gemini-3-flash": {
+        "model_id": "gemini-3-flash",
+        "display_name": "Gemini 3 Flash (grounding)",
         "provider": "google",
+        "family": "Google",
+        "surface": "gemini_api_grounded",
         "supports_web_search": true,
         "supports_seed": false,
         "max_tokens": 1000000,
         "cost_per_1k_input": 0.000075,
         "cost_per_1k_output": 0.0003,
-        "temperature_range": [0.0, 2.0],
+        "avg_cost_per_answer_usd": 0.002,
+        "temperature_range": [0, 2],
         "supports_system_message": true,
-        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models"
+        "api_endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+        "citation_adapter": "gemini_grounding_chunks_resolve_redirect"
       }
     },
     "perplexity": {
@@ -92,45 +130,136 @@
         "model_id": "sonar-pro",
         "display_name": "Perplexity Sonar Pro",
         "provider": "perplexity",
+        "family": "Perplexity",
+        "surface": "perplexity_api_grounded",
         "supports_web_search": true,
         "supports_seed": false,
         "max_tokens": 200000,
         "cost_per_1k_input": 0.003,
         "cost_per_1k_output": 0.015,
-        "temperature_range": [0.0, 2.0],
+        "avg_cost_per_answer_usd": 0.02,
+        "temperature_range": [0, 2],
         "supports_system_message": false,
         "api_endpoint": "https://api.perplexity.ai/chat/completions",
-        "always_search": true
-      },
-      "sonar-online": {
-        "model_id": "sonar",
-        "display_name": "Perplexity Sonar Online",
-        "provider": "perplexity",
-        "supports_web_search": true,
-        "supports_seed": false,
-        "max_tokens": 200000,
-        "cost_per_1k_input": 0.001,
-        "cost_per_1k_output": 0.001,
-        "temperature_range": [0.0, 2.0],
-        "supports_system_message": false,
-        "api_endpoint": "https://api.perplexity.ai/chat/completions",
-        "always_search": true
+        "always_search": true,
+        "citation_adapter": "perplexity_citations_flat"
       }
     },
     "deepseek": {
-      "deepseek-v2": {
+      "deepseek-v3": {
         "model_id": "deepseek-chat",
-        "display_name": "DeepSeek V2",
+        "display_name": "DeepSeek V3 (no browsing — memory baseline)",
         "provider": "deepseek",
+        "family": "DeepSeek",
+        "surface": "deepseek_api_memory",
         "supports_web_search": false,
         "supports_seed": false,
         "max_tokens": 128000,
         "cost_per_1k_input": 0.00014,
         "cost_per_1k_output": 0.00028,
-        "temperature_range": [0.0, 2.0],
+        "avg_cost_per_answer_usd": 0.002,
+        "temperature_range": [0, 2],
         "supports_system_message": true,
-        "api_endpoint": "https://api.deepseek.com/chat/completions"
+        "api_endpoint": "https://api.deepseek.com/chat/completions",
+        "citation_adapter": "none_memory_only"
       }
+    },
+    "xai": {
+      "grok-4": {
+        "model_id": "grok-4",
+        "display_name": "Grok 4 (xAI, live search)",
+        "provider": "xai",
+        "family": "xAI",
+        "surface": "grok_api_grounded",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 131072,
+        "cost_per_1k_input": 0.003,
+        "cost_per_1k_output": 0.015,
+        "avg_cost_per_answer_usd": 0.035,
+        "temperature_range": [0, 2],
+        "supports_system_message": true,
+        "api_endpoint": "https://api.x.ai/v1/chat/completions",
+        "search_tool": { "type": "web_search" },
+        "citation_adapter": "openai_chat_annotations",
+        "note": "Response reports its own search cost — preserve usage.search_cost"
+      }
+    },
+    "microsoft": {
+      "copilot-serp": {
+        "model_id": "copilot-serp",
+        "display_name": "Copilot / Bing Grounded Answers (SERP API)",
+        "provider": "microsoft",
+        "family": "Microsoft",
+        "surface": "copilot_serp_grounded",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 8000,
+        "cost_per_1k_input": 0.0,
+        "cost_per_1k_output": 0.0,
+        "avg_cost_per_answer_usd": 0.005,
+        "temperature_range": [0, 1],
+        "supports_system_message": false,
+        "api_endpoint": "serp_via_dataforseo_or_serper",
+        "citation_adapter": "serp_organic_results",
+        "note": "Collected via SERP API (DataForSEO/Serper/Zenserp), not a chat API. Configure SERP_API_KEY."
+      }
+    },
+    "google-serp": {
+      "ai-overviews": {
+        "model_id": "google-ai-overviews",
+        "display_name": "Google AI Overviews (SERP API)",
+        "provider": "google-serp",
+        "family": "Google",
+        "surface": "aio_serp_grounded",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 8000,
+        "cost_per_1k_input": 0.0,
+        "cost_per_1k_output": 0.0,
+        "avg_cost_per_answer_usd": 0.005,
+        "temperature_range": [0, 0],
+        "supports_system_message": false,
+        "api_endpoint": "serp_via_dataforseo_or_serper",
+        "citation_adapter": "serp_aio_citations",
+        "note": "AI Overviews + AI Mode are separate surfaces sharing ~13.7% citations. Track fan-out queries."
+      },
+      "ai-mode": {
+        "model_id": "google-ai-mode",
+        "display_name": "Google AI Mode (SERP API)",
+        "provider": "google-serp",
+        "family": "Google",
+        "surface": "ai_mode_serp_grounded",
+        "supports_web_search": true,
+        "supports_seed": false,
+        "max_tokens": 8000,
+        "cost_per_1k_input": 0,
+        "cost_per_1k_output": 0,
+        "avg_cost_per_answer_usd": 0.005,
+        "temperature_range": [0, 0],
+        "supports_system_message": false,
+        "api_endpoint": "serp_via_dataforseo_or_serper",
+        "citation_adapter": "serp_aio_citations"
+      }
+    }
+  },
+  "deprecated": {
+    "_notice": "Shut down or superseded. Retained so old runs still validate; orchestrator refuses to schedule them by default.",
+    "gpt-4o-search-preview": { "model_id": "gpt-4o-search-preview", "shutdown": "2026-07-23", "migrate_to": "gpt-5-5" },
+    "gpt-4o-mini-search-preview": { "model_id": "gpt-4o-mini-search-preview", "shutdown": "2026-07-23", "migrate_to": "gpt-5-search-api" },
+    "claude-3-opus": { "model_id": "claude-3-opus-20240229", "migrate_to": "claude-4-opus" },
+    "gemini-1.5-pro": { "model_id": "gemini-1.5-pro", "migrate_to": "gemini-2-5-pro" },
+    "web_search_preview_tool": { "detail": "OpenAI web_search_preview tool type is dead. Use {\"type\": \"web_search\"} (Responses) with tool_choice + allowed_domains." }
+  },
+  "cost_reference": {
+    "source": "Stork.AI prod measurement Aug 2026, 925 runs — 1 question x 6 engines = $0.245 at API prices",
+    "per_answer_usd": { "chatgpt": 0.035, "claude": 0.101, "gemini": 0.002, "perplexity": 0.02, "grok": 0.035, "deepseek": 0.002, "scraper_ui": 0.004 },
+    "avg_citations_per_answer": { "chatgpt": 7.92, "claude": 5.67, "gemini_aio": 13.3, "perplexity": 21.87 },
+    "index_bias": {
+      "chatgpt": "Bing index, Wikipedia 16.3%",
+      "claude": "Brave Search, NYT/Atlantic/NPR cluster, longest freshness window",
+      "gemini": "Google index, Wikipedia 11.2% + YouTube 9.5% + google-owned 22.8%",
+      "perplexity": "Sonar, Reddit 6.6%, 82% Google overlap"
     }
   },
   "playwright_targets": {
@@ -138,13 +267,15 @@
       "url": "https://chatgpt.com",
       "requires_auth": true,
       "auth_method": "cookie",
-      "session_file": "./data/sessions/chatgpt.json"
+      "session_file": "./data/sessions/chatgpt.json",
+      "note": "Opt-in only. Residential proxy + stealth required. ToS risk — default mode is api_only."
     },
     "claude_web": {
       "url": "https://claude.ai",
       "requires_auth": true,
       "auth_method": "cookie",
-      "session_file": "./data/sessions/claude.json"
+      "session_file": "./data/sessions/claude.json",
+      "note": "Opt-in only."
     },
     "perplexity_web": {
       "url": "https://www.perplexity.ai",

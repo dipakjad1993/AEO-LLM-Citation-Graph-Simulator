@@ -26,7 +26,9 @@ const PROVIDER_API_KEYS = [
   'ANTHROPIC_API_KEY',
   'GOOGLE_AI_API_KEY',
   'PERPLEXITY_API_KEY',
-  'DEEPSEEK_API_KEY'
+  'DEEPSEEK_API_KEY',
+  'XAI_API_KEY',
+  'SERP_API_KEY'
 ];
 
 const PLACEHOLDER_PATTERNS = [
@@ -199,13 +201,17 @@ export function validateAllConfigs({ env = process.env, requireKeys = true, conf
   };
 
   errors.push(...validateModels(parse('models.json')));
-  errors.push(...validateEntityConfig(parse('entity_maps.json')?.entity_maps));
+  const demoMode = env.AEO_DEMO_MODE === '1';
+  const entityErrors = validateEntityConfig(parse('entity_maps.json')?.entity_maps);
+  // Demo mode seeds a synthetic brand at runtime — don't hard-fail on placeholders.
+  errors.push(...(demoMode ? entityErrors.filter(e => !/primary_name|competitor/i.test(e)) : entityErrors));
   errors.push(...validateExecution(parse('execution.json')?.execution));
   errors.push(...validatePersonas(parse('personas.json')));
 
-  if (requireKeys && !hasValidApiKey(env)) {
+  if (requireKeys && !hasValidApiKey(env) && env.AEO_DEMO_MODE !== '1') {
     errors.push('No valid API key found in environment. Set at least one of ' +
-      'OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY, PERPLEXITY_API_KEY, DEEPSEEK_API_KEY in .env');
+      'OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY, PERPLEXITY_API_KEY, DEEPSEEK_API_KEY, XAI_API_KEY, SERP_API_KEY in .env ' +
+      '(or AEO_DEMO_MODE=1 for the keyless demo)');
   }
 
   if (errors.length > 0) {

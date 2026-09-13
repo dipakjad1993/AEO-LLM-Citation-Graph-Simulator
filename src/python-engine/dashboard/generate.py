@@ -66,6 +66,10 @@ class DashboardGenerator:
             if verification_fig:
                 charts.append(('Claim Verification (Ground Truth)', verification_fig))
 
+            grounded_fig = self._create_grounded_chart(results)
+            if grounded_fig:
+                charts.append(('Grounded vs Memory (Browse Evidence)', grounded_fig))
+
         html = self._generate_html(results, charts)
 
         dashboard_path = dashboard_dir / 'aeo_dashboard.html'
@@ -162,6 +166,27 @@ class DashboardGenerator:
             height=400
         )
 
+        return fig
+
+    def _create_grounded_chart(self, results: Dict):
+        somv = results.get('somv', {})
+        grounded = somv.get('grounded_only', {}) or {}
+        browse = grounded.get('browse_rate_by_model', {}) or {}
+        if not browse:
+            dq = results.get('data_quality', {}) or {}
+            if not dq:
+                return None
+            browse = {'all_models': {'browse_rate': dq.get('grounded_share', 0),
+                                     'grounded': dq.get('grounded_responses', 0),
+                                     'total': dq.get('record_count', 0)}}
+        models = list(browse.keys())
+        rates = [browse[m].get('browse_rate', 0) * 100 for m in models]
+        colors = ['#2ecc71' if r >= 74 else '#f39c12' if r >= 50 else '#e74c3c' for r in rates]
+        fig = go.Figure(data=[go.Bar(x=models, y=rates, marker_color=colors,
+                                     text=[f'{r:.0f}%' for r in rates], textposition='outside')])
+        fig.update_layout(title='Browse Evidence Rate by Model (Grounded = has citations/search traces)',
+                          xaxis_title='Model', yaxis_title='Grounded (%)',
+                          template='plotly_dark' if self.theme == 'dark' else 'plotly_white', height=400)
         return fig
 
     def _create_sentiment_chart(self, results: Dict) -> go.Figure:
@@ -303,6 +328,25 @@ class DashboardGenerator:
         biases = results.get('sentiment_matrix', {}).get('detected_biases', [])
         gaps = somv.get('competitive_gaps', [])
         primary_brand = self.config.get('entity_maps', {}).get('entity_maps', {}).get('your_brand', {}).get('primary_name', '')
+        dq = results.get('data_quality', {}) or {}
+        grounded = somv.get('grounded_only', {}) or {}
+        g_share = grounded.get('grounded_share', dq.get('grounded_share', 1))
+        g_warn = grounded.get('warning', '')
+        grounding_banner = ''
+        if g_share is not None and g_share < 0.74:
+            grounding_banner = f"""
+            <div class="grounding-banner grounding-warn">
+                <strong>Methodology warning:</strong> only {g_share:.0%} of responses show browse evidence
+                ({grounded.get('grounded_responses', dq.get('grounded_responses', '?'))} grounded /
+                {grounded.get('ungrounded_responses', dq.get('ungrounded_responses', '?'))} memory).
+                <strong>Grounded-only SoMV</strong> is the decision number — ungrounded SoMV is pre-training popularity.
+                {g_warn}
+            </div>"""
+        else:
+            grounding_banner = f"""
+            <div class="grounding-banner grounding-ok">
+                <strong>Grounded:</strong> {g_share:.0%} of responses show browse evidence. SoMV below mixes grounded + memory — see grounded_only block for the honest split.
+            </div>"""
 
         charts_html = ""
         for title, fig in charts:
@@ -579,6 +623,21 @@ class DashboardGenerator:
             border-left: 3px solid var(--accent-red);
         }}
 
+        .grounding-banner {{
+            border-radius: 8px;
+            padding: 14px 16px;
+            margin-bottom: 16px;
+            font-size: 0.95em;
+        }}
+        .grounding-banner.grounding-warn {{
+            background: rgba(231, 76, 60, 0.12);
+            border: 1px solid var(--accent-red);
+        }}
+        .grounding-banner.grounding-ok {{
+            background: rgba(46, 204, 113, 0.10);
+            border: 1px solid var(--accent-green);
+        }}
+
         .recommendation {{
             background: var(--bg-secondary);
             border-radius: 8px;
@@ -790,6 +849,8 @@ class DashboardGenerator:
             <h1>AEO & LLM Citation Graph Simulator</h1>
             <p class="subtitle">Generative Engine Optimization Dashboard | Generated: {timestamp}</p>
         </header>
+
+        {grounding_banner}
 
         <div class="stats-grid">
             <div class="stat-card">

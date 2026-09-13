@@ -59,7 +59,8 @@ class ShareOfVoiceCalculator:
             'overall': {}, 'by_model': {}, 'by_persona': {},
             'by_turn_type': {}, 'by_turn_index': {},
             'rag_vs_base': {}, 'omission_analysis': {},
-            'citation_depth': {}, 'competitive_gaps': {}
+            'citation_depth': {}, 'competitive_gaps': {},
+            'grounded_only': {}, 'grounding_diagnostics': {},
         }
         successful_df = df.filter(pl.col('success') == True)
         if successful_df.height == 0:
@@ -74,6 +75,9 @@ class ShareOfVoiceCalculator:
         results['omission_analysis'] = self._analyze_omissions(successful_df)
         results['citation_depth'] = self._analyze_citation_depth(successful_df)
         results['competitive_gaps'] = self._identify_competitive_gaps(results)
+        # 2026 methodology honesty: grounded-only SoMV + browse diagnostics.
+        results['grounded_only'] = self._calculate_grounded_only(successful_df)
+        results['grounding_diagnostics'] = self._grounding_diagnostics(successful_df)
         return results
 
     def _sov_for_df(self, sub_df: pl.DataFrame, total: int) -> Dict:
@@ -206,6 +210,56 @@ class ShareOfVoiceCalculator:
                 continue
         result['top_cited_domains'] = dict(domain_counts.most_common(20))
         return result
+
+    def _calculate_grounded_only(self, df: pl.DataFrame) -> Dict:
+        """SoMV computed ONLY on responses with browse evidence (the honest number)."""
+        if 'search_performed' not in df.columns:
+            return {'status': 'no_grounding_signal', 'message': 'No search_performed flag — re-run orchestrator to capture browse evidence.'}
+        grounded = df.filter(pl.col('search_performed') == True)
+        ungrounded = df.filter(pl.col('search_performed') != True)
+        out = {
+            'grounded_responses': grounded.height,
+            'ungrounded_responses': ungrounded.height,
+            'grounded_share': round(grounded.height / df.height, 4) if df.height else 0,
+            'overall': self._sov_for_df(grounded, grounded.height) if grounded.height else {},
+            'by_model': self._calculate_sov_by_dimension(grounded, 'model_id') if grounded.height else {},
+        }
+        # Per-model browse rate exposes the "74% problem" (ChatGPT API skips browsing ~26%).
+        browse_by_model = {}
+        if 'model_id' in df.columns:
+            for m in df['model_id'].unique().to_list():
+                sub = df.filter(pl.col('model_id') == m)
+                g = sub.filter(pl.col('search_performed') == True).height
+                browse_by_model[str(m)] = {
+                    'browse_rate': round(g / sub.height, 4) if sub.height else 0,
+                    'grounded': g, 'total': sub.height,
+                    'flag': 'LOW_BROWSE_RATE' if sub.height >= 5 and g / sub.height < 0.5 else 'OK',
+                }
+        out['browse_rate_by_model'] = browse_by_model
+        if out['grounded_share'] < 0.74:
+            out['warning'] = (f"Only {out['grounded_share']:.0%} of responses show browse evidence. "
+                              'Ungrounded (memory) answers inflate/deflate SoMV — use grounded_only for decisions.')
+        return out
+
+    def _grounding_diagnostics(self, df: pl.DataFrame) -> Dict:
+        diag = {'requested_vs_performed': {}, 'variance_flag': False}
+        if 'search_performed' not in df.columns:
+            return diag
+        req_col = 'search_requested' if 'search_requested' in df.columns else 'rag_enabled'
+        try:
+            req = df.filter(pl.col(req_col) == True).height
+            perf = df.filter(pl.col('search_performed') == True).height
+            diag['requested_vs_performed'] = {
+                'search_requested': req, 'search_performed': perf,
+                'skip_rate': round(1 - perf / req, 4) if req else 0,
+            }
+            diag['variance_flag'] = bool(req and (1 - perf / req) > 0.2)
+            if diag['variance_flag']:
+                diag['finding'] = (f"{diag['requested_vs_performed']['skip_rate']:.0%} of browse-requested calls "
+                                   'answered from memory. Filter to grounded-only before reporting SoMV.')
+        except Exception:
+            pass
+        return diag
 
     def _identify_competitive_gaps(self, results: Dict) -> List[Dict]:
         gaps = []

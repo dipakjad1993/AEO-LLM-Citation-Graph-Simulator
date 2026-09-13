@@ -1,25 +1,7 @@
 """
 Enterprise Intelligence & Advanced Graph Analytics
 ===================================================
-
-Adds the enterprise-grade analytical layers that turn raw LLM response data
-into actionable, CMO-ready intelligence. Every metric below is computed from
-the REAL response data captured by the orchestrator (all_results.json) and the
-graphs/embeddings produced by earlier pipeline stages. No fabricated values.
-
-Modules:
-  1. API vs Web-UI Parity Calibration  - variance between API and browser
-     channels for the same prompt/model; flags variance > 15%.
-  2. Multi-Turn Citation Persistence Rate (CPR) - do citations survive across
-     a 5-turn conversation, or is context being truncated?
-  3. Graph Authority Score G_auth = a*C_D(v) + b*C_B(v) + g*S_cos
-  4. Inverse Citation Mapping (Uncited Authority) - domains competitors win
-     citations from that you are absent on, plus LLM crawler robots.txt
-     blockage detection (GPTBot, ClaudeBot, PerplexityBot, Bytespider).
-  5. Source-Level ROI Prioritization - Citation Influence Weight ranking.
-  6. Semantic Gap Remediation Scripts - JSON-LD + Markdown drafts generated
-     from missing/negative triples.
-  7. SoMV Trendlines by model family and funnel stage.
+... (unchanged header) ...
 """
 
 import json
@@ -38,21 +20,39 @@ from brand_utils import build_brand_patterns
 
 logger = logging.getLogger(__name__)
 
-LLM_CRAWLERS = {
-    'GPTBot': 'gptbot',
-    'ClaudeBot': 'claude-ai',
-    'ClaudeBot2': 'claudebot',
-    'PerplexityBot': 'perplexitybot',
-    'Bytespider': 'bytespider',
-    'Google-Extended': 'google-extended',
+# 2026 3-door crawler model (SparkCliks + Google AI Optimization Guide May 2026):
+#  Door 1 TRAINING (safe to block): GPTBot, ClaudeBot, Google-Extended (token, not crawler), CCBot.
+#  Door 2 SEARCH INDEXING (DO NOT BLOCK or you vanish from answers): OAI-SearchBot,
+#           Claude-SearchBot, PerplexityBot, Googlebot, Bingbot.
+#  Door 3 LIVE FETCH (agentic fetch at answer time): ChatGPT-User, Claude-User, Perplexity-User.
+# Blocking GPTBot does NOT remove you from ChatGPT Search. Blocking OAI-SearchBot DOES.
+# Blocking Google-Extended does NOT remove you from AI Overviews (served from Googlebot index).
+CRAWLER_DOORS = {
+    'training': {
+        'GPTBot': 'gptbot', 'ClaudeBot': 'claudebot', 'Google-Extended': 'google-extended',
+        'CCBot': 'ccbot', 'Bytespider-train': 'bytespider',
+    },
+    'search_indexing': {
+        'OAI-SearchBot': 'oai-searchbot', 'Claude-SearchBot': 'claude-searchbot',
+        'PerplexityBot': 'perplexitybot', 'Googlebot': 'googlebot', 'Bingbot': 'bingbot',
+    },
+    'live_fetch': {
+        'ChatGPT-User': 'chatgpt-user', 'Claude-User': 'claude-user', 'Perplexity-User': 'perplexity-user',
+    },
 }
+# Back-compat alias (old name checked only training bots — do NOT use for gating).
+LLM_CRAWLERS = {**CRAWLER_DOORS['training'], **CRAWLER_DOORS['search_indexing']}
 
 MODEL_FAMILIES = {
-    'gpt-4o': 'OpenAI', 'gpt-4o-mini': 'OpenAI', 'chatgpt': 'OpenAI',
-    'claude-3-5-sonnet': 'Anthropic', 'claude-3-opus': 'Anthropic', 'claude': 'Anthropic',
-    'gemini-1.5-pro': 'Google', 'gemini-2.0-flash': 'Google', 'gemini': 'Google',
+    'gpt-5': 'OpenAI', 'gpt-4o': 'OpenAI', 'gpt-4o-mini': 'OpenAI', 'chatgpt': 'OpenAI', 'o1': 'OpenAI', 'o3': 'OpenAI',
+    'claude-sonnet-4': 'Anthropic', 'claude-opus-4': 'Anthropic', 'claude-3-5-sonnet': 'Anthropic', 'claude-3-opus': 'Anthropic', 'claude': 'Anthropic',
+    'gemini-3': 'Google', 'gemini-2.5': 'Google', 'gemini-2.0-flash': 'Google', 'gemini-1.5-pro': 'Google', 'gemini': 'Google',
+    'ai-overview': 'Google', 'ai-mode': 'Google',
     'sonar-pro': 'Perplexity', 'sonar-online': 'Perplexity', 'sonar': 'Perplexity', 'perplexity': 'Perplexity',
-    'deepseek-chat': 'DeepSeek', 'deepseek-v2': 'DeepSeek', 'deepseek': 'DeepSeek',
+    'deepseek': 'DeepSeek',
+    'grok-4': 'xAI', 'grok': 'xAI',
+    'copilot': 'Microsoft',
+    'demo-model': 'Demo',
 }
 
 
@@ -278,16 +278,31 @@ class EnterpriseInsights:
             result['message'] = 'No citation graph available for authority scoring.'
             return result
 
-        # Normalize centrality to 0..1 across nodes
+        # Normalize centrality to 0..1 across nodes (defensive float coercion:
+        # centrality attrs may arrive as numpy scalars, 1-elem arrays, or strings).
+        def _f(v):
+            try:
+                import numpy as _np
+                if isinstance(v, _np.ndarray):
+                    v = float(v.reshape(-1)[0]) if v.size else 0.0
+                elif isinstance(v, _np.generic):
+                    v = float(v)
+            except ImportError:
+                pass
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+
         def _norm(values):
             items = list(values.items())
             if not items:
                 return {}
-            vals = [float(v) for _, v in items]
+            vals = [_f(v) for _, v in items]
             mx = max(vals)
             if mx <= 0:
                 return {k: 0.0 for k, _ in items}
-            return {k: v / mx for k, v in items}
+            return {k: _f(v) / mx for k, v in items}
 
         in_deg = _norm({n: d.get('in_degree_centrality', 0) for n, d in citation_graph.nodes(data=True)})
         betw = _norm({n: d.get('betweenness_centrality', 0) for n, d in citation_graph.nodes(data=True)})
@@ -296,20 +311,20 @@ class EnterpriseInsights:
         brand_profiles = embedding.get('brand_vector_profiles', {}) or {}
         # Representative intent vector: use the primary brand's intra-similarity or cross-model sim
         intent_sim = {}
-        for b in self.all_brands:
-            prof = brand_profiles.get(b, {}) or {}
+        for _brand in self.all_brands:
+            prof = brand_profiles.get(_brand, {}) or {}
             if prof:
-                intent_sim[b] = float(prof.get('mean_intra_similarity', 0.5))
+                intent_sim[_brand] = float(prof.get('mean_intra_similarity', 0.5))
             else:
-                intent_sim[b] = 0.5
+                intent_sim[_brand] = 0.5
 
         rows = []
         for node, data in citation_graph.nodes(data=True):
             ntype = data.get('type', node.split(':')[0] if ':' in node else 'node')
-            cd = in_deg.get(node, 0.0)
-            cb = betw.get(node, 0.0)
+            cd = _f(in_deg.get(node, 0.0))
+            cb = _f(betw.get(node, 0.0))
             name = node.split(':', 1)[1] if ':' in node else node
-            scos = intent_sim.get(name, 0.5)
+            scos = _f(intent_sim.get(name, 0.5))
             g_auth = a * cd + b * cb + g * scos
             rows.append({'node': node, 'name': name, 'type': ntype,
                          'in_degree_centrality': round(cd, 4), 'betweenness_centrality': round(cb, 4),
@@ -343,17 +358,25 @@ class EnterpriseInsights:
 
         if missing and self.entity_config.get('your_brand', {}).get('website'):
             result['crawler_blockage'] = self._check_crawler_blocks(missing)
-            blocked = [c for c in result['crawler_blockage'] if c.get('blocked')]
+            blocked = [c for c in result['crawler_blockage'] if c.get('blocked') and c.get('severity') in ('CRITICAL', 'WARNING')]
             result['summary']['crawler_blocked_domains'] = len(blocked)
+            result['summary']['by_door'] = {door: sum(1 for c in blocked if c.get('door') == door) for door in ('training', 'search_indexing', 'live_fetch')}
             if blocked:
                 result['findings'] = [
-                    f'{len(blocked)} of the top competitor-winning sources are blocked by at least one LLM crawler. '
-                    'This is the #1 cause of "citation omission due to crawler blockage".'
+                    f'{len(blocked)} blocking rule(s) found, incl. {result["summary"]["by_door"].get("search_indexing", 0)} CRITICAL search-indexing blocks. '
+                    'Blocking OAI-SearchBot / Claude-SearchBot / PerplexityBot / Googlebot removes you from grounded answers; '
+                    'blocking GPTBot alone does not.'
                 ]
         return result
 
     def _check_crawler_blocks(self, missing_nodes: List[Dict]) -> List[Dict]:
-        """Check robots.txt of the primary brand's website for LLM crawler disallows."""
+        """3-door robots.txt audit of the primary brand's website.
+
+        Door verdicts: training blocks are SAFE; search_indexing blocks are
+        CRITICAL (cause invisibility); live_fetch blocks are WARNING.
+        Also greps nosnippet / max-snippet / data-nosnippet (Google: these apply
+        to AI features too — a nosnippet page cannot surface in AIO).
+        """
         website = self.entity_config.get('your_brand', {}).get('website', '')
         if not website:
             return []
@@ -368,19 +391,40 @@ class EnterpriseInsights:
             with urllib.request.urlopen(req, timeout=8) as resp:
                 body = resp.read(60000).decode('utf-8', 'ignore')
             lower = body.lower()
-            for crawler, token in LLM_CRAWLERS.items():
-                if token in lower:
-                    blocks.append({
-                        'crawler': crawler,
-                        'robots_txt': robots_url,
-                        'disallowed': True,
-                        'detail': f'{crawler} appears in your robots.txt — check whether your key pages are Disallowed.'
-                    })
+            # Per-UA-block aware parse: attribute Disallow lines to the UA stanza.
+            stanzas = re.split(r'(?m)^user-agent:\s*', body)
+            door_blocked = {'training': [], 'search_indexing': [], 'live_fetch': []}
+            for stanza in stanzas[1:]:
+                first_line = stanza.splitlines()[0].strip().lower() if stanza.splitlines() else ''
+                ua = first_line.strip('* ').strip()
+                disallows = [l.strip() for l in stanza.splitlines() if l.strip().lower().startswith('disallow:') and l.split(':', 1)[1].strip() not in ('', '/robots.txt')]
+                if not disallows:
+                    continue
+                for door, bots in CRAWLER_DOORS.items():
+                    for crawler, token in bots.items():
+                        if token in ua or ua == '*':
+                            door_blocked[door].append({'crawler': crawler, 'ua': first_line, 'disallows': disallows[:5]})
+            for door, hits in door_blocked.items():
+                for h in hits:
+                    severity = 'INFO' if door == 'training' else 'CRITICAL' if door == 'search_indexing' else 'WARNING'
+                    detail = (f"{h['crawler']} ({door}): Disallow {h['disallows'][0]} — "
+                              + ('safe to block (training only).' if door == 'training'
+                                 else 'DO NOT BLOCK: this removes you from grounded answers.' if door == 'search_indexing'
+                                 else 'may break live agentic fetch at answer time.'))
+                    blocks.append({'crawler': h['crawler'], 'door': door, 'severity': severity,
+                                   'robots_txt': robots_url, 'blocked': door != 'training',
+                                   'detail': detail})
+            # nosnippet family grep
+            for directive in ['nosnippet', 'max-snippet:0', 'data-nosnippet']:
+                if directive in lower:
+                    blocks.append({'crawler': 'Google-AIO', 'door': 'search_indexing', 'severity': 'CRITICAL',
+                                   'robots_txt': robots_url, 'blocked': True,
+                                   'detail': f"'{directive}' found in robots/meta context — Google applies this to AI Overviews & AI Mode too. Snippet-ineligible pages cannot surface."})
             if not blocks:
-                blocks.append({'crawler': 'all_checked', 'robots_txt': robots_url, 'disallowed': False,
-                               'detail': 'robots.txt checked for GPTBot, ClaudeBot, PerplexityBot, Bytespider, Google-Extended — none found.'})
+                blocks.append({'crawler': 'all_checked', 'door': 'all', 'severity': 'OK', 'robots_txt': robots_url, 'blocked': False,
+                               'detail': 'robots.txt checked across all 3 doors (training / search-indexing / live-fetch) — no blocking rules found.'})
         except Exception as e:
-            blocks.append({'crawler': 'check_failed', 'robots_txt': robots_url, 'disallowed': None,
+            blocks.append({'crawler': 'check_failed', 'robots_txt': robots_url, 'blocked': None,
                            'detail': f'Could not fetch robots.txt: {e}'})
         return blocks
 

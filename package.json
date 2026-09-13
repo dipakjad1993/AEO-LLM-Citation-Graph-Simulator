@@ -1,21 +1,28 @@
 {
   "name": "aeo-llm-citation-graph-simulator",
-  "version": "1.0.0",
-  "description": "AEO & LLM Citation Graph Simulator - Generative Engine Optimization",
+  "version": "2.0.0",
+  "description": "AEO & LLM Citation Graph Simulator - open, auditable technical-SEO truth for AI search (2026)",
   "main": "src/node-orchestrator/index.js",
   "type": "module",
   "scripts": {
     "setup": "node setup.js",
     "start": "node src/node-orchestrator/index.js",
+    "start:demo": "node src/node-orchestrator/index.js --demo --prompts 12",
+    "demo": "python seed_demo_data.py --run",
+    "demo:seed": "python seed_demo_data.py",
     "orchestrate": "node src/node-orchestrator/index.js --mode orchestrate",
     "analyze": "python src/python-engine/main.py",
     "dashboard": "python src/python-engine/dashboard/generate.py",
     "full-run": "node src/node-orchestrator/index.js --mode orchestrate && python src/python-engine/main.py && python src/python-engine/dashboard/generate.py",
-    "install-deps": "npm install && pip install -r requirements.txt",
+    "scheduler:daily": "node src/node-orchestrator/scheduler.js --daily",
+    "scheduler:alerts": "node src/node-orchestrator/scheduler.js --check-alerts",
+    "eval": "python src/python-engine/tests/test_eval_goldens.py",
+    "install-deps": "npm install && pip install -r requirements-lite.txt",
+    "install-deps:full": "npm install && pip install -r requirements.txt",
     "validate": "node src/node-orchestrator/utils/testRunner.js",
     "validate:python": "python src/python-engine/tests/test_pipeline.py",
     "test:unit": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py",
-    "test": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py && node src/node-orchestrator/utils/testRunner.js && python src/python-engine/tests/test_pipeline.py"
+    "test": "node --test src/node-orchestrator/utils/unitTests.js && python src/python-engine/tests/test_verification.py && python src/python-engine/tests/test_eval_goldens.py && node src/node-orchestrator/utils/testRunner.js && python src/python-engine/tests/test_pipeline.py"
   },
   "dependencies": {
     "playwright": "^1.45.0",

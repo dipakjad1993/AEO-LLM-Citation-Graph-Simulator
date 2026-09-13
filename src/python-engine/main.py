@@ -216,6 +216,13 @@ class AEOAnalyticsEngine:
                 'turn_type': item.get('turnType', item.get('turn_type', '')),
                 'prompt': prompt,
                 'rag_enabled': item.get('ragEnabled', item.get('rag_enabled', True)),
+                'search_performed': item.get('search_performed', item.get('searchPerformed', False)),
+                'search_requested': item.get('search_requested', item.get('searchRequested', item.get('ragEnabled', item.get('rag_enabled', True)))),
+                'ungrounded': item.get('ungrounded', False),
+                'grounding': item.get('grounding', ''),
+                'channel': item.get('channel', ''),
+                'serp_surface': item.get('serp_surface', ''),
+                'volatility_rep': item.get('volatilityRep', item.get('volatility_rep', 0)),
                 'success': item.get('status', 'fulfilled') in ('fulfilled', 'success', 'COMPLETED', True),
                 'raw_text': raw_text,
                 'citations': citations,
@@ -230,10 +237,14 @@ class AEOAnalyticsEngine:
                 'timestamp': item.get('timestamp', item.get('generated_at', meta.get('generated_at', '')))
             }
 
-            # If a summary row said a brand was mentioned but we couldn't find it
-            # in text, and the file-level brand_analyzed is set, attribute it.
+            # NEVER synthesize evidence: if a row claims a brand mention but has
+            # no response text, mark it unusable rather than fabricating copy.
+            # (A prior version injected "X is a leading provider..." — removed
+            # 2026-09: it poisoned SoMV, triples, and embeddings.)
             if record['brand_mentioned'] and meta.get('brand_analyzed') and not raw_text:
-                record['raw_text'] = f"{meta['brand_analyzed']} is a leading provider in this category. {meta['brand_analyzed']} ranks among the top vendors referenced here."
+                record['raw_text'] = ''
+                record['success'] = False
+                record['unusable_reason'] = 'claimed_brand_mention_without_response_text'
             record['file_brand'] = meta.get('brand_analyzed', '')
             record['_declared_prompts'] = meta.get('declared_prompt_count')
 
@@ -250,6 +261,8 @@ class AEOAnalyticsEngine:
         records_with_citations = 0
         records_with_brand = 0
         nonempty_text = 0
+        grounded_count = 0
+        ungrounded_count = 0
         models = set()
         channels = set()
         brands_mentioned = set()
@@ -273,6 +286,10 @@ class AEOAnalyticsEngine:
             bm = row.get('primary_brand_mention') or row.get('brand_mentioned')
             if bm:
                 brands_mentioned.add(str(bm))
+            if row.get('search_performed'):
+                grounded_count += 1
+            else:
+                ungrounded_count += 1
 
         declared_prompts = None
         try:
@@ -293,12 +310,17 @@ class AEOAnalyticsEngine:
             warnings.append('No model identifiers present — model-family breakdowns will be limited.')
         if not brands_mentioned:
             warnings.append('No brand mentions detected in text — verify your brand name is spelled the same as in the data.')
+        if ungrounded_count > n * 0.26:
+            warnings.append(f'{ungrounded_count}/{n} responses show NO browse evidence (ungrounded/memory answers) — enable the grounded-only SoMV toggle for honest reporting.')
 
         return {
             'record_count': n,
             'records_with_text': nonempty_text,
             'citation_count': total_citations,
             'records_with_citations': records_with_citations,
+            'grounded_responses': grounded_count,
+            'ungrounded_responses': ungrounded_count,
+            'grounded_share': round(grounded_count / n, 4) if n else 0,
             'records_with_brand_mention': len(brands_mentioned),
             'unique_models': sorted(models),
             'channels': sorted(channels),
@@ -322,11 +344,12 @@ class AEOAnalyticsEngine:
         output_path.mkdir(parents=True, exist_ok=True)
 
         import time as _time
+        TOTAL_STAGES = 14
         def _emit(stage_num, stage_name):
             import json as _json
-            msg = _json.dumps({'stage': stage_name, 'stageNum': stage_num, 'totalStages': 10, 'elapsed': f'{_time.time()-pipeline_start:.0f}s'})
+            msg = _json.dumps({'stage': stage_name, 'stageNum': stage_num, 'totalStages': TOTAL_STAGES, 'elapsed': f'{_time.time()-pipeline_start:.0f}s'})
             print(f'__PROGRESS__:{msg}', flush=True)
-            logger.info(f'Stage {stage_num}/10: {stage_name}')
+            logger.info(f'Stage {stage_num}/{TOTAL_STAGES}: {stage_name}')
         pipeline_start = _time.time()
 
         try:
@@ -418,18 +441,72 @@ class AEOAnalyticsEngine:
             enterprise.save(enterprise_results, output_path)
             _emit(8, f'Enterprise insights done ({_time.time()-t0:.1f}s)')
 
-            _emit(9, 'Generating Dashboard')
+            _emit(9, 'Technical Site Audit (snippet/JS/JSON-LD/freshness)')
+            try:
+                from analytics.site_auditor import SiteAuditor
+                _t = _time.time()
+                auditor = SiteAuditor(self.config)
+                site_audit = auditor.audit()
+                results['site_audit'] = site_audit
+                auditor.save(site_audit, output_path)
+                _emit(9, f'Site audit done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Site audit failed: {e}')
+                results['site_audit'] = {'status': 'error', 'message': str(e)}
+
+            _emit(10, 'Agent Readiness (llms.txt/MCP/UCP/ACP)')
+            try:
+                from analytics.agent_readiness import AgentReadiness
+                _t = _time.time()
+                agent = AgentReadiness(self.config)
+                agent_results = agent.analyze()
+                results['agent_readiness'] = agent_results
+                agent.save(agent_results, output_path)
+                _emit(10, f'Agent readiness done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Agent readiness failed: {e}')
+                results['agent_readiness'] = {'status': 'error', 'message': str(e)}
+
+            _emit(11, 'Answer Volatility (repeat-run variance + CIs)')
+            try:
+                from analytics.volatility import VolatilityAnalyzer
+                _t = _time.time()
+                vol = VolatilityAnalyzer(self.config)
+                vol_results = vol.analyze(df)
+                results['volatility'] = vol_results
+                vol.save(vol_results, output_path)
+                _emit(11, f'Volatility done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Volatility failed: {e}')
+                results['volatility'] = {'status': 'error', 'message': str(e)}
+
+            _emit(12, 'Third-Party Dominance + Geo/Temporal')
+            try:
+                from analytics.third_party_geo import ThirdPartyDominance, GeoTemporal
+                _t = _time.time()
+                tpd = ThirdPartyDominance(self.config).analyze(df)
+                results['third_party_dominance'] = tpd
+                ThirdPartyDominance(self.config).save(tpd, output_path)
+                geo = GeoTemporal(self.config).analyze(df)
+                results['geo_temporal'] = geo
+                GeoTemporal(self.config).save(geo, output_path)
+                _emit(12, f'Third-party/geo done ({_time.time()-_t:.1f}s)')
+            except Exception as e:
+                logger.warning(f'Third-party/geo failed: {e}')
+                results['third_party_dominance'] = {'status': 'error', 'message': str(e)}
+
+            _emit(13, 'Generating Dashboard')
             t0 = _time.time()
             dashboard_gen = DashboardGenerator(self.config)
             dashboard_path = dashboard_gen.generate(results, output_path)
             results['dashboard_path'] = str(dashboard_path)
-            _emit(8, f'Dashboard done ({_time.time()-t0:.1f}s)')
+            _emit(13, f'Dashboard done ({_time.time()-t0:.1f}s)')
 
-            _emit(10, 'Generating Actionable Recommendations')
+            _emit(14, 'Generating Actionable Recommendations')
             t0 = _time.time()
             recommendations = self.generate_recommendations(results)
             results['recommendations'] = recommendations
-            _emit(10, f'Recommendations done ({_time.time()-t0:.1f}s)')
+            _emit(14, f'Recommendations done ({_time.time()-t0:.1f}s)')
 
             summary_path = output_path / 'pipeline_summary.json'
             with open(summary_path, 'w') as f:
@@ -538,7 +615,7 @@ class AEOAnalyticsEngine:
                         'priority': 'HIGH',
                         'category': 'RAG Indexing Gap',
                         'finding': f'{brand_display} performs better in base weights (pre-training) than RAG. RAG rate: {insight_data["rag_rate"]:.1%} vs Base rate: {insight_data["base_rate"]:.1%}.',
-                        'action': f'RAG index is missing your content. Implement Schema.org (FAQ, Product, TechArticle) on key pages. Ensure static HTML delivery (94% parse success vs 23% JS). Target crawlers: GPTBot, ClaudeBot, PerplexityBot.',
+                        'action': f'RAG index is missing your content. Implement Schema.org (FAQ, Product, TechArticle) on key pages. Ensure static HTML delivery (94% parse success vs 23% JS). Allow search-indexing crawlers (OAI-SearchBot, Claude-SearchBot, PerplexityBot, Googlebot) + live-fetch agents.',
                         'estimated_impact': 'HIGH'
                     })
                 else:
@@ -983,8 +1060,8 @@ class AEOAnalyticsEngine:
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Crawler Blockage',
-                'finding': f'{ic_summary.get("crawler_blocked_domains", 0)} sources flagged: LLM crawlers (GPTBot, ClaudeBot, PerplexityBot, Bytespider) are blocked from key domains — the #1 cause of citation omission.',
-                'action': 'Audit robots.txt and Cloudflare/WAF rules. Allow GPTBot, ClaudeBot, PerplexityBot, Bytespider, Google-Extended on your key pages.',
+                'finding': f'{ic_summary.get("crawler_blocked_domains", 0)} blocking rule(s) flagged across the 3-door audit (see inverse_citation.by_door). Search-indexing blocks remove you from grounded answers.',
+                'action': 'Audit robots.txt by door: allow OAI-SearchBot, Claude-SearchBot, PerplexityBot, Googlebot/Bingbot (search) and ChatGPT-User/Claude-User/Perplexity-User (live fetch). Training bots (GPTBot, ClaudeBot, Google-Extended) are safe to block. Remove nosnippet/max-snippet:0.',
                 'estimated_impact': 'HIGH'
             })
         if ic_summary.get('uncited_authority_count', 0) > 0:
@@ -1026,6 +1103,85 @@ class AEOAnalyticsEngine:
                 'category': 'Funnel-Stage Visibility',
                 'finding': f,
                 'action': 'Re-balance content toward the weaker funnel stage shown above.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # ─── MODULE 10: Grounded-only honesty ───
+        grounded = (somv.get('grounded_only', {}) or {})
+        if grounded.get('grounded_share', 1) < 0.74:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Ungrounded Answers Inflating SoMV',
+                'finding': f"Only {grounded.get('grounded_share', 0):.0%} of responses show browse evidence ({grounded.get('grounded_responses', 0)} grounded / {grounded.get('ungrounded_responses', 0)} memory). Reported SoMV mixes memory with retrieval.",
+                'action': 'Switch the dashboard to grounded-only SoMV for decisions; treat ungrounded SoMV as pre-training popularity only.',
+                'estimated_impact': 'HIGH'
+            })
+        for model_name, b in (grounded.get('browse_rate_by_model', {}) or {}).items():
+            if b.get('flag') == 'LOW_BROWSE_RATE':
+                recommendations.append({
+                    'priority': 'MEDIUM',
+                    'category': 'Low Browse Rate',
+                    'finding': f"{model_name} browsed only {b.get('browse_rate', 0):.0%} of the time ({b.get('grounded')}/{b.get('total')}).",
+                    'action': f'Force browsing for {model_name} (tool_choice required, search context high) or exclude it from grounded comparisons.',
+                    'estimated_impact': 'MEDIUM'
+                })
+
+        # ─── MODULE 11: Volatility ───
+        vol = results.get('volatility', {}) or {}
+        if vol.get('status') == 'measured' and vol.get('summary', {}).get('unstable_share', 0) > 0.3:
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Answer Volatility',
+                'finding': f"{vol['summary']['unstable_share']:.0%} of money prompts flip leaders across repeats — point-estimate SoMV is theater.",
+                'action': 'Publish CI-banded SoMV (Wilson 95%) and re-run volatile prompts 5x weekly; optimize pages cited in the winning repeat.',
+                'estimated_impact': 'HIGH'
+            })
+        elif vol.get('status') == 'no_repeats':
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Volatility Not Measured',
+                'finding': 'Money prompts ran once each — variance unknown (AIO shifts ~70% on repeat).',
+                'action': 'Enable execution.volatility (repeats=5) for comparison/pricing prompts.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # ─── MODULE 12: Site audit ───
+        site = results.get('site_audit', {}) or {}
+        if site.get('status') == 'audited':
+            if site.get('score', 100) < 70:
+                recommendations.append({
+                    'priority': 'HIGH',
+                    'category': 'Site Not AI-Surfacing-Ready',
+                    'finding': f"Technical site audit scored {site.get('score')}/100 (grade {site.get('grade')}).",
+                    'action': 'Work the site_audit.fixes list top-down: snippet eligibility first, then JS-render, semantic HTML, JSON-LD, freshness.',
+                    'estimated_impact': 'HIGH'
+                })
+            for fix in (site.get('fixes', []) or [])[:3]:
+                recommendations.append({
+                    'priority': 'MEDIUM', 'category': 'Site Fix',
+                    'finding': fix if isinstance(fix, str) else str(fix),
+                    'action': 'Implement on money pages first; re-audit after deploy.',
+                    'estimated_impact': 'MEDIUM'
+                })
+
+        # ─── MODULE 13: Agent readiness ───
+        agent = results.get('agent_readiness', {}) or {}
+        if agent.get('status') == 'scored' and agent.get('score', 100) < 75:
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Agent Readiness',
+                'finding': f"Agent-readiness {agent.get('score')}/100 ({agent.get('verdict')}). llms.txt is NOT a Google factor — MCP/UCP/ACP are the gap.",
+                'action': 'Ship MCP/WebMCP Tool Contract + UCP search_catalog (+ACP for shopping) before polishing llms.txt.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # ─── MODULE 14: Third-party dominance ───
+        tpd = results.get('third_party_dominance', {}) or {}
+        for brief in (tpd.get('outreach_briefs', []) or [])[:3]:
+            recommendations.append({
+                'priority': 'MEDIUM', 'category': f"Earned-Media Pack: {brief.get('pack')}",
+                'finding': brief.get('brief', ''),
+                'action': 'Execute the outreach brief: seed expert content on the pack domains and link to canonical facts pages.',
                 'estimated_impact': 'MEDIUM'
             })
 

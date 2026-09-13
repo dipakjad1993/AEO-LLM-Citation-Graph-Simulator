@@ -11,6 +11,8 @@ import { AnthropicProvider } from './providers/anthropic.js';
 import { GoogleProvider } from './providers/google.js';
 import { PerplexityProvider } from './providers/perplexity.js';
 import { DeepSeekProvider } from './providers/deepseek.js';
+import { GrokProvider } from './providers/grok.js';
+import { SerpProvider, CopilotProvider, AIOverviewsProvider, AIModeProvider } from './providers/serp.js';
 import { PlaywrightScraper } from './scrapers/playwrightScraper.js';
 import { PromptGenerator } from './utils/promptGenerator.js';
 import { ResponseExtractor } from './utils/responseExtractor.js';
@@ -144,10 +146,29 @@ class AEOOrchestrator {
 
     const entityConfig = this.config.entityMaps;
     const yourBrand = entityConfig?.entity_maps?.your_brand;
-    if (!yourBrand || !yourBrand.primary_name) {
+    if (process.env.AEO_DEMO_MODE === '1') {
+      // Keyless demo: seed a synthetic brand + competitors so validation passes.
+      const em = this.config.entityMaps.entity_maps;
+      if (!em.your_brand?.primary_name) {
+        em.your_brand = {
+          primary_name: 'Acme Analytics', display_name: 'Acme Analytics',
+          aliases: ['Acme'], website: 'https://example.com', category: 'analytics platform',
+          attributes: { features: ['dashboards', 'alerts'], pricing_model: 'SaaS', target_segment: ['enterprise'], certifications: ['SOC2'], unique_selling_points: ['real-time insights'] },
+          ground_truth_urls: [], monitoring_keywords: ['analytics platform']
+        };
+      }
+      if (!em.competitors?.length) {
+        em.competitors = [{ primary_name: 'RivalOne', display_name: 'RivalOne' }, { primary_name: 'RivalTwo', display_name: 'RivalTwo' }];
+      }
+      // Demo registry: single synthetic model so coverage is fast and free.
+      this.config.models = { models: { demo: { 'demo-model': { model_id: 'demo-model', display_name: 'Demo (synthetic)', provider: 'demo', supports_web_search: true, supports_seed: false, max_tokens: 4000, cost_per_1k_input: 0, cost_per_1k_output: 0, temperature_range: [0, 1], supports_system_message: true } } } };
+      logger.info('Demo mode: seeded synthetic brand/competitors + demo model registry');
+    }
+    const brandCheck = this.config.entityMaps?.entity_maps?.your_brand;
+    if (!brandCheck || !brandCheck.primary_name) {
       throw new Error('FATAL: No primary brand configured. Fill in config/entity_maps.json with your_brand.primary_name before running.');
     }
-    if (!entityConfig?.entity_maps?.competitors || entityConfig.entity_maps.competitors.length === 0) {
+    if (!this.config.entityMaps?.entity_maps?.competitors || this.config.entityMaps.entity_maps.competitors.length === 0) {
       throw new Error('FATAL: No competitors configured. Add at least one competitor to config/entity_maps.json.');
     }
 
@@ -156,12 +177,14 @@ class AEOOrchestrator {
       anthropic: process.env.ANTHROPIC_API_KEY,
       google: process.env.GOOGLE_AI_API_KEY,
       perplexity: process.env.PERPLEXITY_API_KEY,
-      deepseek: process.env.DEEPSEEK_API_KEY
+      deepseek: process.env.DEEPSEEK_API_KEY,
+      xai: process.env.XAI_API_KEY,
+      serp: process.env.SERP_API_KEY
     };
 
     const hasAnyKey = Object.values(apiKeyMap).some(k => k && !k.startsWith('your-') && !k.startsWith('sk-your-') && !k.startsWith('sk-ant-your-') && !k.startsWith('pplx-your-'));
-    if (!hasAnyKey) {
-      throw new Error('FATAL: No valid API keys found. Set at least one of OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY, PERPLEXITY_API_KEY, or DEEPSEEK_API_KEY in your .env file.');
+    if (!hasAnyKey && !process.env.AEO_DEMO_MODE) {
+      throw new Error('FATAL: No valid API keys found. Set at least one of OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_AI_API_KEY, PERPLEXITY_API_KEY, DEEPSEEK_API_KEY, XAI_API_KEY, SERP_API_KEY in your .env file. Or run with AEO_DEMO_MODE=1 for a keyless demo.');
     }
 
     if (apiKeyMap.openai) {
@@ -192,6 +215,28 @@ class AEOOrchestrator {
       this.providers.deepseek = new DeepSeekProvider(apiKeyMap.deepseek, this.config);
       this.rateLimiters.deepseek = new RateLimiter(this.config.execution.rate_limiting.deepseek);
       logger.info('DeepSeek provider initialized');
+    }
+
+    if (apiKeyMap.xai) {
+      this.providers.xai = new GrokProvider(apiKeyMap.xai, this.config);
+      this.rateLimiters.xai = new RateLimiter(this.config.execution.rate_limiting.xai || { rpm: 200, tpm: 200000 });
+      logger.info('Grok (xAI) provider initialized');
+    }
+
+    if (apiKeyMap.serp) {
+      this.providers.microsoft = new CopilotProvider(apiKeyMap.serp, this.config);
+      this.providers['google-serp'] = new AIOverviewsProvider(apiKeyMap.serp, this.config);
+      this.rateLimiters.microsoft = new RateLimiter({ rpm: 60, tpm: 32000 });
+      this.rateLimiters['google-serp'] = new RateLimiter({ rpm: 60, tpm: 32000 });
+      logger.info('SERP providers initialized (Copilot + AI Overviews/AI Mode)');
+    }
+
+    // Demo mode: keyless synthetic provider so `npm start -- --demo` works with zero keys.
+    if (process.env.AEO_DEMO_MODE === '1' && Object.keys(this.providers).length === 0) {
+      const { DemoProvider } = await import('./providers/demo.js');
+      this.providers.demo = new DemoProvider(null, this.config);
+      this.rateLimiters.demo = new RateLimiter({ rpm: 1000, tpm: 100000 });
+      logger.info('Demo provider initialized (synthetic, keyless)');
     }
 
     if (this.config.execution.mode !== 'api_only') {
@@ -255,6 +300,9 @@ class AEOOrchestrator {
     const plan = [];
     const mode = this.config.execution.mode;
     const playwrightSampleRate = this.config.execution.playwright_sample_rate;
+    // Volatility: repeat money prompts N times to measure answer variance (AIO shifts ~70% on repeat).
+    const vol = this.config.execution?.volatility || {};
+    const repeats = Math.max(1, Math.min(vol.repeats || 1, 10));
 
     for (const promptSession of prompts) {
       const shouldUsePlaywright = mode !== 'api_only' && this.playwrightScraper && Math.random() < playwrightSampleRate;
@@ -262,6 +310,9 @@ class AEOOrchestrator {
       const models = this.selectModelsForPrompt(promptSession);
 
       for (const turn of promptSession.turns) {
+        const isMoneyPrompt = turn.turnType === 'comparison_analysis' || turn.turnType === 'pricing_procurement' || turn.turnIndex === 0;
+        const n = (vol.enabled && isMoneyPrompt) ? repeats : 1;
+        for (let rep = 0; rep < n; rep++) {
         for (const modelId of models) {
           const provider = this.getProviderForModel(modelId);
           if (!provider) continue;
@@ -274,6 +325,7 @@ class AEOOrchestrator {
             provider: provider,
             usePlaywright: shouldUsePlaywright,
             ragEnabled: true,
+            volatilityRep: rep,
             priority: turn.turnIndex === 0 ? 'high' : 'normal'
           });
 
@@ -286,9 +338,11 @@ class AEOOrchestrator {
               provider: provider,
               usePlaywright: false,
               ragEnabled: false,
+              volatilityRep: rep,
               priority: 'normal'
             });
           }
+        }
         }
       }
     }
@@ -392,6 +446,10 @@ class AEOOrchestrator {
             top_p: this.config.execution.top_p || 0.9,
             seed: modelConfig.supports_seed ? 42 : undefined,
             search_enabled: ragEnabled && modelConfig.supports_web_search,
+            tool_choice: 'auto',
+            allowed_domains: this.config.execution?.search_options?.allowed_domains || [],
+            search_context_size: this.config.execution?.search_options?.search_context_size || 'medium',
+            geo: this.config.execution?.geo?.default_country || undefined,
             stream: false
           });
         });
@@ -443,6 +501,7 @@ class AEOOrchestrator {
     if (modelId.includes('gpt')) return 'chatgpt_web';
     if (modelId.includes('claude')) return 'claude_web';
     if (modelId.includes('sonar') || modelId.includes('perplexity')) return 'perplexity_web';
+    // Grok / Gemini / SERP surfaces have no Playwright target — API/SERP only.
     return null;
   }
 
@@ -481,9 +540,15 @@ class AEOOrchestrator {
       turnType: r.turn?.turnType,
       prompt: r.turn?.prompt,
       ragEnabled: r.ragEnabled,
+      volatilityRep: r.volatilityRep || 0,
       channel: r.usePlaywright ? 'web_ui' : 'api',
       hidden_search_queries: r.result?.hidden_search_queries || [],
+      fanout_queries: r.result?.fanout_queries || [],
       search_performed: r.result?.search_performed || false,
+      search_requested: r.result?.search_requested ?? r.ragEnabled,
+      ungrounded: r.result?.ungrounded || false,
+      grounding: r.result?.grounding || 'unknown',
+      serp_surface: r.result?.serp_surface || null,
       result: r.result,
       error: r.error,
       status: r.status,
@@ -624,6 +689,12 @@ async function main() {
 
   const modelsIndex = args.indexOf('--models');
   const models = modelsIndex !== -1 ? args[modelsIndex + 1]?.split(',') : undefined;
+
+  const demoFlag = args.includes('--demo');
+  if (demoFlag) {
+    process.env.AEO_DEMO_MODE = '1';
+    console.log('Demo mode: keyless synthetic responses (no API cost).');
+  }
 
   const orchestrator = new AEOOrchestrator();
 

@@ -172,14 +172,25 @@ export class PromptGenerator {
   }
 
   getDefaultTemplate(turnType) {
+    // Intent -> answer-shape alignment (2026): shortlist for best-X, definition
+    // for what-is-X, steps for how-to, PAA/Reddit-style objections for compliance.
     const defaults = {
-      category_discovery: 'What are the best {category} solutions for {vertical} companies in 2026?',
-      feature_deep_dive: 'How does {brand_a} handle {feature}? What are the key technical capabilities?',
-      comparison_analysis: 'Compare {brand_a} vs {brand_b} for {use_case}. What are the main differences?',
-      objection_compliance: 'What are the known issues or concerns with {brand_a}? Any compliance problems?',
-      pricing_procurement: 'What does {brand_a} cost for a {company_size} company? Include all fees.'
+      category_discovery: 'What are the best {category} solutions for {vertical} companies in 2026? Give a shortlist with one-line reasons.',
+      feature_deep_dive: 'How does {brand_a} handle {feature}? Define it in one sentence, then list key technical capabilities as steps.',
+      comparison_analysis: 'Compare {brand_a} vs {brand_b} for {use_case}. What are the main differences? End with a verdict for a {company_size} company.',
+      objection_compliance: 'What are the known issues, limitations, or compliance concerns with {brand_a}? Cite specific incidents or reviews.',
+      pricing_procurement: 'What does {brand_a} cost for a {company_size} company? Break down all fees step by step.'
     };
     return defaults[turnType] || 'Tell me about {brand_a} for {use_case}.';
+  }
+
+  /** Fan-out sub-queries Google-style: the follow-ups a complete answer should cover. */
+  fanoutSubqueries(prompt) {
+    return [
+      `${prompt} — what do reviewers on Reddit and G2 say?`,
+      `${prompt} — what does official documentation state?`,
+      `${prompt} — pricing, limitations, and alternatives?`
+    ];
   }
 
   randomInt(min, max) {

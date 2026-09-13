@@ -1,9 +1,14 @@
 {
   "analytics": {
     "nlp": {
-      "spacy_model": "en_core_web_trf",
+      "spacy_model": "en_core_web_sm",
       "fallback_model": "en_core_web_sm",
-      "sentence_transformer": "all-mpnet-base-v2",
+      "heavy_model": "en_core_web_trf",
+      "heavy_model_note": "Opt-in only (400MB). Default sm is fast and sufficient for triples; enable trf via AEO_SPACY_HEAVY=1.",
+      "sentence_transformer": "all-MiniLM-L6-v2",
+      "sentence_transformer_heavy": "all-mpnet-base-v2",
+      "embeddings_mode": "lazy_optional",
+      "embeddings_note": "Embeddings lazy-load; default MiniLM. Set analytics.embedding.model to all-mpnet-base-v2 for max quality.",
       "chunk_size": 512,
       "chunk_overlap": 50,
       "batch_size": 32
@@ -26,48 +31,63 @@
     },
     "sentiment": {
       "model": "cardiffnlp/twitter-roberta-base-sentiment-latest",
+      "mode": "optional_heavy",
+      "fallback": "vader_baseline",
+      "note": "Transformer is opt-in (slow). Default pipeline uses VADER-style baseline + regex; set AEO_SENTIMENT_HEAVY=1 to enable roberta.",
       "positive_threshold": 0.6,
       "negative_threshold": 0.4,
       "neutral_band": [0.4, 0.6]
     },
     "triple_extraction": {
       "method": "spacy_dependency",
+      "passage_level": true,
+      "passage_note": "Sentence triples merged to passage-level claims with rerank-friendly chunk IDs for fan-out emulation.",
       "min_confidence": 0.7,
       "max_triples_per_sentence": 5,
       "negation_detection": true,
       "coreference_resolution": true
     },
     "embedding": {
-      "model": "all-mpnet-base-v2",
-      "dimension": 768,
+      "model": "all-MiniLM-L6-v2",
+      "dimension": 384,
       "normalize": true,
       "batch_size": 64,
       "cache_embeddings": true,
-      "similarity_threshold": 0.3
+      "similarity_threshold": 0.3,
+      "lazy_load": true
     },
     "anomaly_detection": {
       "algorithm": "hdbscan",
+      "mode": "optional_extra",
+      "fallback": "dbscan_sklearn",
       "min_cluster_size": 5,
       "min_samples": 3,
       "contamination": 0.1
+    },
+    "site_audit": {
+      "enabled": true,
+      "extra_pages": ["/pricing", "/faq", "/about"],
+      "note": "Fetches your_brand.website + extras: snippet eligibility, JS-render, semantic HTML, JSON-LD, freshness, E-E-A-T."
     },
     "verification": {
       "enabled": true,
       "use_embeddings": true,
       "embedding": {
-        "model": "all-mpnet-base-v2"
+        "model": "all-MiniLM-L6-v2"
       },
       "verified_threshold": 0.72,
       "partial_threshold": 0.42
     }
   },
   "output": {
-    "formats": ["json", "csv", "html", "pdf"],
+    "formats": ["json", "csv", "html"],
+    "pdf_note": "PDF listed previously but had no generator — removed until a real exporter ships. Use HTML -> print-to-PDF.",
     "dashboard": {
       "template": "enterprise",
       "theme": "dark",
       "interactive": true,
-      "export_charts": true
+      "export_charts": true,
+      "grounded_toggle_default": true
     },
     "reports": {
       "executive_summary": true,
