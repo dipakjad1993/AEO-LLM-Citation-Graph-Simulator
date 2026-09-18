@@ -280,11 +280,13 @@ class AEOOrchestrator {
     }
 
     // Demo mode: keyless synthetic provider so `npm start -- --demo` works with zero keys.
+    // PROD GUARD: demo provider is import-guarded — NODE_ENV=production refuses AEO_DEMO_MODE.
     if (process.env.AEO_DEMO_MODE === '1' && Object.keys(this.providers).length === 0) {
+      if (process.env.NODE_ENV === 'production') throw new Error('REFUSED: AEO_DEMO_MODE=1 in production. Synthetic providers/demo.js must never execute in prod paths.');
       const { DemoProvider } = await import('./providers/demo.js');
       this.providers.demo = new DemoProvider(null, this.config);
       this.rateLimiters.demo = new RateLimiter({ rpm: 1000, tpm: 100000 });
-      logger.info('Demo provider initialized (synthetic, keyless)');
+      logger.info('Demo provider initialized (synthetic, keyless, quarantined)');
     }
 
     if (this.config.execution.mode !== 'api_only') {

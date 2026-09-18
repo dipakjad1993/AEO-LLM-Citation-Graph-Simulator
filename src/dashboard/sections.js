@@ -1394,3 +1394,86 @@ function renderStrategicSummary(s) {
   h += '</div>';
   return h;
 }
+
+// ══════════════════════════════════════════════════════════════
+// 2026 ENTERPRISE TRUTH TABS — Google Truth / Surfaces / Fan-out / ACE / Crawl
+// Per-surface + grounded-only + Wilson. Never averaged. All no_data-honest.
+// ══════════════════════════════════════════════════════════════
+function renderGoogleTruth(s) {
+  const g = s.google_truth || {};
+  const tj = s.traffic_join || {};
+  let h = sectionHeader('google', 'Google Truth — Generative AI Report + Controls', 'OAuth API pull for the Generative AI performance report side-by-side with Web Performance, plus Search generative AI control audit. Web clicks include AI totals — delta ≠ causation.', '🔍');
+  const files = g.files_present || {};
+  const present = Object.entries(files).filter(([, v]) => v).map(([k]) => k);
+  if (g.status === 'no_data') {
+    h += insight('No Google Truth files yet. Run: <code>python scripts/gsc_genai_pull.py --audit-controls https://example.com/</code> + <code>--genai-csv/--web-csv</code>, or set GSC_OAUTH_* for the live API pull. ' + (g.message || ''), 'warn');
+  } else {
+    h += insight(`Google Truth sidecar: <strong>${present.join(', ') || 'files present'}</strong>. Fetch live: <code>GET /api/google-truth</code>.`, 'success');
+  }
+  const gate = tj.gsc_generative_gate || {};
+  const ga = tj.ga4_ai_referrers || {};
+  if (gate.status === 'measured') h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val" style="color:var(--blue)">${(gate.generative_inclusion_rate * 100).toFixed(1)}%</div><div class="lbl">Generative Inclusion Rate</div></div><div class="res-kpi"><div class="val">${fmt(gate.converting_queries)}</div><div class="lbl">Converting Queries</div></div></div>`;
+  if (ga.status === 'measured') h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val" style="color:var(--green)">${(ga.ai_revenue_share * 100).toFixed(1)}%</div><div class="lbl">AI Revenue Share</div></div><div class="res-kpi"><div class="val">${(ga.ai_session_share * 100).toFixed(1)}%</div><div class="lbl">AI Session Share</div></div></div>`;
+  h += deepAnalysis('<strong>Google 2026 rules encoded:</strong> AIO + AI Mode rooted in core Search ranking (RAG from Search index). Eligibility (indexed + snippet-eligible + tech reqs + generative inclusion) ≠ visibility. Myths killed: llms.txt, chunking, special AI schema, AI-rewrite. Controls: Search generative AI control (include default), page noindex vs nosnippet/max-snippet/data-nosnippet, Google-Extended = training only. No generated queries / reasoning / citation rank exposed. Zero-click: 92–94% AI Mode, 80–83% AIO.');
+  h += '</div>';
+  return h;
+}
+
+function renderSurfaces(s) {
+  const sp = s.surface_split || {};
+  let h = sectionHeader('surfaces', 'Surfaces — AIO vs AI Mode vs Gemini (Never Averaged)', 'AIO + AI Mode are 86% semantically similar but only 13.7% same URLs. Each surface gets its own SoMV / volatility / fan-out.', '🛰️');
+  const per = sp.per_surface || {};
+  const rows = Object.entries(per).filter(([, v]) => v.status === 'measured').map(([k, v]) => ({ cells: [k, v.n, v.grounded_n, (v.browse_rate * 100).toFixed(1) + '%', (v.flags || []).join(', ') || '—'] }));
+  if (rows.length) h += miniTable(['Surface', 'n', 'Grounded n', 'Browse rate', 'Flags'], rows);
+  else h += insight('No per-surface rows yet — ' + (sp.rule || 'collect AIO + AI Mode via SERP separately.'), 'warn');
+  const ov = sp.aio_vs_aimode_overlap || {};
+  if (ov.jaccard != null) h += deepAnalysis(`<strong>AIO vs AI Mode overlap:</strong> ${ov.shared} shared domains / ${ov.aio_domains} AIO + ${ov.ai_mode_domains} AI Mode (Jaccard ${(ov.jaccard * 100).toFixed(1)}%). ${ov.reference || ''}`);
+  const vw = s.volume_weighted_somv || {};
+  if (vw.weighted) h += insight(`<strong>Volume-weighted SoMV (demand-adjusted):</strong> ${Object.entries(vw.volume_weighted_somv || {}).slice(0, 5).map(([b, v]) => `${b} ${(v * 100).toFixed(1)}%`).join(' · ')} <span style="color:var(--text2)">(sources: ${(vw.volume_sources || []).join(', ')})</span>`, 'success');
+  else h += insight('SoMV is UNWEIGHTED (theater warning). Run <code>python scripts/prompt_miner.py --gsc gsc.csv</code> for Prompt Volumes + Conversation Explorer-lite.', 'warn');
+  h += '</div>';
+  return h;
+}
+
+function renderFanout(s) {
+  const ei = s.enterprise_insights || {};
+  const rd = ei.retrieval_diagnostics || {};
+  let h = sectionHeader('fanout', 'Query Fan-outs — Hidden Queries → Cited Domains', 'The fix-queries-not-copy insight: a hidden query that never surfaces in citations is a reformulation failure.', '🕸️');
+  const rows = rd.per_prompt || rd.failures || rd.rows || [];
+  if (rd.status === 'no_data' || !rows.length) {
+    h += insight('No fan-out data. Enable <code>dynamic_search_context.capture_hidden_queries</code> (max_search_queries_per_prompt, query_templates, source_priority) and re-run. Live API: <code>GET /api/fanout</code>. ' + (rd.message || ''), 'warn');
+  } else {
+    h += miniTable(['Prompt', 'Hidden queries', 'Cited domains', 'Verdict'], rows.slice(0, 20).map((r) => ({ cells: [String(r.prompt || '').slice(0, 60), (r.hidden_queries || []).join('; ').slice(0, 80) || '—', (r.cited_domains || []).join(', ').slice(0, 80) || '—', r.reformulation_failure ? 'REFORMULATION FAILURE' : 'ok'] })));
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderACE(s) {
+  const ace = s.ace_predictor || {};
+  let h = sectionHeader('ace', 'ACE — Predictive Citation Probability (Prioritization, Not Prophecy)', 'Lightweight logistic model fitted on THIS run only: recency, stats, quotes, authority, snippet eligibility, fan-out overlap → P(cite) + uplift levers.', '🎯');
+  const ranked = ace.ranked_lowest_first || [];
+  if (ace.status !== 'ok' || !ranked.length) {
+    h += insight('No ACE scores yet — pipeline emits ace_predictor from site-audit pages. ' + (ace.message || ''), 'warn');
+  } else {
+    h += miniTable(['Page (lowest P first)', 'P(cite)', 'Top lever (+Δ)'], ranked.slice(0, 15).map((r) => ({ cells: [String(r.url || '').slice(0, 60), r.p_cite, `${(r.levers || [])[0] ? r.levers[0].lever : '—'} (${(r.levers || [])[0] ? '+' + r.levers[0].delta_p_cite : ''})`] })));
+    h += deepAnalysis('<strong>Honesty:</strong> P(cite) is a within-run prioritization score, not a Google guarantee. Eligibility ≠ visibility. Example lever: “add 1 stat + source = +X%”.');
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderCrawlTruth(s) {
+  const c = s.crawl_truth || {};
+  let h = sectionHeader('crawl', 'Crawl Truth — Bot Fetches + MCP/robots/llms.txt Probes', 'If you are blocked, you are invisible — and no SoMV number explains why without this. ChatGPT = Bing + OAI-SearchBot · Claude = Brave · Gemini = Google + YouTube 9.5% · Perplexity = Sonar + Reddit 6.6%.', '🤖');
+  if (c.status === 'no_data') h += insight('No crawl_truth.json. Run: <code>python scripts/crawler_audit.py --site https://example.com [--log access.log]</code>. Live: <code>GET /api/crawl</code>. ' + (c.message || ''), 'warn');
+  else h += insight('Crawl Truth present — see <code>GET /api/crawl</code> for per-bot hits + /.well-known/mcp.json + llms.txt + robots probes.', 'success');
+  const fc = s.factcheck || {};
+  if (fc.status === 'ok') h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val">${(fc.accuracy_intervention_rate * 100).toFixed(1)}%</div><div class="lbl">Accuracy Intervention Rate (bench 7.9%)</div></div><div class="res-kpi"><div class="val">${fc.needs_fix}/${fc.checked}</div><div class="lbl">Claims Needing Fix</div></div></div>`;
+  else h += insight('FactCheck loop: ' + (fc.message || 'no claim feed yet — triples feed FactCheckLoop when present.') + ' Apply via <code>python scripts/remediation_pr.py --apply-factcheck</code> (PR drafts, never auto-publish).', 'warn');
+  const mm = s.multimodal_truth || {};
+  if (mm.status === 'no_data') h += insight('Multimodal/Merchant/Local: ' + (mm.message || 'run multimodal_merchant_audit.py for image alt, VideoObject/transcripts, GTIN/price/availability, GBP checklist.'), 'warn');
+  else h += insight('Multimodal/Merchant/Local audit present.', 'success');
+  h += '</div>';
+  return h;
+}

@@ -27,7 +27,8 @@ Gemini=Google/Wikipedia 11.2%+YouTube 9.5%+Google-owned 22.8%; Perplexity=Sonar/
 ## Late-2026 candidates (UNVERIFIED, never scheduled)
 
 `late_2026_candidates` in `models.json` (gemini-3.1/3.5-flash, gemini-3-omni,
-claude-sonnet-4-6, claude-opus-4-7, grok-4-1, grok-5, gpt-5.6, perplexity-agent)
+claude-sonnet-4-6, claude-opus-4-7, grok-4-1, grok-5, gpt-5.6, perplexity-agent,
+meta-ai, rufus-serp, copilot-chat, chatgpt-user-action)
 are `scheduled:false + registry_status:unverified` with estimated costs.
 The orchestrator refuses to query them until a human verifies the exact `model_id`
 against provider docs and flips `scheduled:true`.

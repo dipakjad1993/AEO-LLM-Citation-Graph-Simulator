@@ -233,6 +233,34 @@ class SiteAuditor:
             'detail': 'Author bylines + About/Contact + original data + Merchant Center/GBP for commerce/local.'}
         if eeat_score < 100:
             out['fixes'].append('Add author bylines with bios, About/Contact pages, original data/methodology, Merchant Center + GBP for commerce/local.')
+
+        # 7. NEGATIVE checks (Google May-15 + Aug-31 2026: GEO Twitter myths that HURT).
+        # These do not raise the score — they flag hacks to REMOVE.
+        neg = []
+        words = text.split()
+        # keyword stuffing: top content word density > 4%
+        from collections import Counter as _C
+        toks = [w.lower() for w in re.findall(r"[a-z]{4,}", text.lower())]
+        if toks:
+            top, cnt = _C(toks).most_common(1)[0]
+            dens = cnt / max(len(toks), 1)
+            if dens > 0.04 and len(toks) > 200:
+                neg.append(f"keyword-stuffing: '{top}' density {dens:.1%} — remove stuffing; write for the task, not density.")
+        # chunking hack: dozens of near-identical short H2/H3 blocks
+        h_all = re.findall(r'<h[23][^>]*>(.*?)</h[23]>', html, re.S | re.I)
+        if len(h_all) >= 12 and len(set(_strip_tags(h).strip().lower()[:40] for h in h_all)) < len(h_all) * 0.6:
+            neg.append("chunking-hack: many near-duplicate H2/H3 blocks — Google says chunking is NOT required; consolidate into task-complete sections.")
+        # separate near-duplicate AI page
+        if re.search(r"/ai-|/llm-|/chatgpt-|ai-overview", url, re.I) and len(words) < 600:
+            neg.append("separate-thin-AI-page: thin /ai-* page risks near-duplicate — consolidate into the canonical page unless it serves a distinct task.")
+        # llms.txt overweight guard
+        if re.search(r"llms\.txt.*(30%|weight.*30|priority.*high)", body, re.I):
+            neg.append("llms.txt-overweight: keep llms.txt at 15% experimental — NOT a Google ranking factor (Illyes/Mueller). Ship MCP/UCP/ACP first.")
+        out['checks']['negative_geo_myths'] = {'score': 100 if not neg else 40, 'flags': neg,
+            'detail': 'Google-killed tactics: chunking, keyword density/long-tail stuffing, separate AI pages, llms.txt overweight, AI-rewrite.' if neg else 'No GEO-myth hacks detected.'}
+        for n in neg:
+            out['findings'].append(f'{url}: {n}')
+            out['fixes'].append(f'REMOVE: {n}')
         return out
 
     def save(self, results: Dict, output_dir) -> None:

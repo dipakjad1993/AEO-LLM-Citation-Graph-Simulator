@@ -20,6 +20,9 @@ const UPLOAD_SECTIONS = new Set(['prompts', 'entities', 'corpus', 'gold_standard
 const STATIC_ALLOW = [
   { route: '/', file: path.join(ROOT, 'src', 'dashboard', 'index.html'), type: 'text/html' },
   { route: '/index.html', file: path.join(ROOT, 'src', 'dashboard', 'index.html'), type: 'text/html' },
+  // Pages-compat: index.html uses ./sections.js, which resolves to /sections.js
+  // at "/" (both locally and when src/dashboard is the Pages output dir).
+  { route: '/sections.js', file: path.join(ROOT, 'src', 'dashboard', 'sections.js'), type: 'application/javascript' },
 ];
 const STATIC_DIRS = [
   { prefix: '/screenshots/', dir: path.join(ROOT, 'screenshots') },
@@ -153,15 +156,53 @@ function tryPersistSqlite(slim) {
   } catch {}
 }
 
-// ─── OIDC / RBAC stubs (enterprise SSO) ─────────────────────────────────────
+// ─── OIDC / RBAC (enterprise SSO) ─────────────────────────────────────
+import { initJobStore, writeJob, writeAudit as _writeAuditDb } from './src/node-orchestrator/job_store.js';
+initJobStore(DATA_DIR);
 const OIDC_ISSUER = process.env.AEO_OIDC_ISSUER || '';
 const OIDC_AUDIENCE = process.env.AEO_OIDC_AUDIENCE || '';
 const OIDC_JWKS = process.env.AEO_OIDC_JWKS_URL || '';
 const SSO_ENFORCED = Boolean(OIDC_ISSUER && OIDC_JWKS);
+const _jwksCache = { keys: [], fetchedAt: 0 };
+async function verifyOidcJwt(token) {
+  // Real JWKS verify (kid-matched, iss/aud/exp). Uses global fetch + WebCrypto; no new deps.
+  if (!SSO_ENFORCED) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) throw new Error('malformed JWT');
+  const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+  const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  if (OIDC_ISSUER && payload.iss !== OIDC_ISSUER) throw new Error('bad iss');
+  if (OIDC_AUDIENCE && !(payload.aud === OIDC_AUDIENCE || (Array.isArray(payload.aud) && payload.aud.includes(OIDC_AUDIENCE)))) throw new Error('bad aud');
+  if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('expired JWT');
+  if (Date.now() - _jwksCache.fetchedAt > 3600_000 || !_jwksCache.keys.length) {
+    const r = await fetch(OIDC_JWKS, { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) throw new Error(`JWKS fetch ${r.status}`);
+    const j = await r.json();
+    _jwksCache.keys = j.keys || [];
+    _jwksCache.fetchedAt = Date.now();
+  }
+  const jwk = _jwksCache.keys.find((k) => !header.kid || k.kid === header.kid);
+  if (!jwk) throw new Error('kid not in JWKS');
+  const { createPublicKey, createVerify } = await import('crypto');
+  const pub = createPublicKey({ key: jwk, format: 'jwk' });
+  const v = createVerify('RSA-SHA256');
+  v.update(`${parts[0]}.${parts[1]}`);
+  if (!v.verify(pub, Buffer.from(parts[2], 'base64url'))) throw new Error('bad JWT signature');
+  return payload;
+}
+let _oidcPayload = null;
 if (!SSO_ENFORCED) log('Auth mode: single-token (dev/SMB). Set AEO_OIDC_ISSUER/AUDIENCE/JWKS_URL for OIDC JWT + RBAC.');
 else log(`Auth mode: OIDC JWT enforced (issuer=${OIDC_ISSUER}) with roles admin|analyst|viewer.`);
 function callerRole(req) {
+  if (_oidcPayload) {
+    const roles = _oidcPayload.roles || _oidcPayload.groups || [];
+    const list = Array.isArray(roles) ? roles : [roles];
+    if (list.includes('admin')) return 'admin';
+    if (list.includes('analyst')) return 'analyst';
+    return 'viewer';
+  }
   const r = (req.headers['x-aeo-role'] || req.headers['x-role'] || '').toLowerCase();
+  if (SSO_ENFORCED) return 'viewer'; // never trust headers when OIDC is enforced
   if (['admin', 'analyst', 'viewer'].includes(r)) return r;
   return AUTH_TOKEN ? 'admin' : 'viewer'; // single-token mode: token holder is admin
 }
@@ -382,9 +423,28 @@ const server = http.createServer(async (req, res) => {
   const ip = req.socket.remoteAddress || 'unknown';
   if (rateLimited(ip)) { jsonRes(res, 429, { error: 'Rate limited', reqId }, req); return; }
   if (url.pathname.startsWith('/api/') && !authed(req)) { jsonRes(res, 401, { error: 'Unauthorized: set Authorization: Bearer $AEO_AUTH_TOKEN', reqId }, req); return; }
+  // OIDC JWT enforcement: verify Bearer JWT on every /api/* when SSO_ENFORCED.
+  // Single-token mode never reaches here with SSO_ENFORCED=false.
+  if (SSO_ENFORCED && url.pathname.startsWith('/api/') && url.pathname !== '/api/health') {
+    const tok = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    try {
+      _oidcPayload = await verifyOidcJwt(tok);
+    } catch (e) {
+      jsonRes(res, 401, { error: `OIDC verify failed: ${e.message}`, reqId }, req);
+      return;
+    }
+  }
+  // RBAC matrix enforcement on ALL mutating routes (not just /api/admin/).
+  // Matrix: config/security.json — admin: /api/*, analyst: no /api/admin/*, viewer: read-only.
+  const MUTATING = req.method === 'POST' || req.method === 'DELETE' || req.method === 'PUT' || req.method === 'PATCH';
+  if (MUTATING && url.pathname.startsWith('/api/')) {
+    const role = callerRole(req);
+    if (role === 'viewer') { jsonRes(res, 403, { error: `Forbidden: role 'viewer' is read-only (matrix config/security.json)`, reqId }, req); return; }
+    if (url.pathname.startsWith('/api/admin/') && role !== 'admin') { jsonRes(res, 403, { error: `Forbidden: role '${role}' not in [admin]`, reqId }, req); return; }
+  }
   if (SSO_ENFORCED && url.pathname.startsWith('/api/admin/')) {
-    // OIDC JWT enforcement point: verify Bearer JWT against JWKS (kid-matched), check aud/iss/exp + roles claim.
-    // Single-token mode never reaches here with SSO_ENFORCED=false; see docs/enterprise.md §1 + config/security.json.
+    // OIDC JWT enforcement point: verified above (kid-matched JWKS, iss/aud/exp + roles claim).
+    // See docs/enterprise.md §1 + config/security.json.
     if (!requireRole(req, res, 'admin')) return;
   }
 
@@ -399,7 +459,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/upload/') && req.method === 'POST') {
       const section = safeSection(url.pathname.split('/api/upload/')[1]?.split('/')[0]);
       if (!section) { jsonRes(res, 400, { error: 'Bad section' }); return; }
-      const body = await readBody(req);
+      let body;
+      try {
+        body = await readBody(req);
+      } catch (e) {
+        jsonRes(res, 413, { error: `${e.message}. Large GSC/GA4 uploads: use CLI instead — python scripts/import_traffic.py --gsc g.csv --ga4 g.csv (streams, no 25MB cap).` });
+        return;
+      }
       const ct = req.headers['content-type'] || '';
       let files = [];
       if (ct.includes('multipart/form-data')) {
@@ -629,6 +695,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/security' && req.method === 'GET') {
       let exec = {};
       try { exec = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'execution.json'), 'utf8')).execution || {}; } catch {}
+      if (exec.mode === 'playwright_only') {
+        jsonRes(res, 200, { reqId, error: 'playwright_only is debug-only and MUST never be used for production tracking (ToS risk, ~16x cost). Set execution.mode to api_only (default) or hybrid (85/15 parity control).', refused: true }, req);
+        return;
+      }
       jsonRes(res, 200, {
         reqId, cors: { mode: CORS_STAR ? 'star_dev_only' : (ALLOWED_ORIGINS.length ? 'allow_list' : 'loopback_default'), origins: ALLOWED_ORIGINS },
         auth: { token_required: IS_PROD || Boolean(AUTH_TOKEN), sso_enforced: SSO_ENFORCED, oidc_issuer: OIDC_ISSUER || null, rbac: ['admin', 'analyst', 'viewer'], caller_role: callerRole(req) },
@@ -678,11 +748,25 @@ const server = http.createServer(async (req, res) => {
 
     // API export: ?format=json (full slim summary) | csv (flat SoMV by_model for
     // Looker Studio / Sheets: brand,model,mention_rate,primary_rate,omission_rate,n).
+    // + format=jsonl (full JSONL dump for retention/export) + retention policy doc.
     if (url.pathname === '/api/export' && req.method === 'GET') {
       const format = (url.searchParams.get('format') || 'json').toLowerCase();
       const analysisDir = findLatestAnalysis();
       if (!analysisDir) { jsonRes(res, 404, { error: 'No completed analysis to export' }); return; }
       const summary = JSON.parse(fs.readFileSync(path.join(analysisDir, 'pipeline_summary.json'), 'utf8'));
+      if (format === 'jsonl') {
+        const lines = [JSON.stringify({ type: 'pipeline_summary', ...slimSummary(summary) })];
+        try {
+          const rd = path.join(analysisDir, 'extracted_data', 'all_results.json');
+          if (fs.existsSync(rd)) {
+            const rows = JSON.parse(fs.readFileSync(rd, 'utf8'));
+            for (const r of (Array.isArray(rows) ? rows : rows.rows || []).slice(0, 5000)) lines.push(JSON.stringify({ type: 'row', ...r }));
+          }
+        } catch {}
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson', ...corsHeaders(), 'Content-Disposition': 'attachment; filename="aeo_export.jsonl"' });
+        res.end(lines.join('\n'));
+        return;
+      }
       if (format === 'csv') {
         const rows = [['brand', 'model', 'mention_rate', 'primary_recommendation_rate', 'omission_rate', 'n']];
         const byModel = summary?.somv?.by_model || {};
@@ -697,6 +781,60 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       jsonRes(res, 200, { analysisDir: path.basename(analysisDir), summary: slimSummary(summary) });
+      return;
+    }
+
+    // ─── Enterprise truth endpoints (all read from normalized uploads + latest analysis) ──
+    function readJsonIf(p) { try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null; } catch { return null; } }
+    if (url.pathname === '/api/google-truth' && req.method === 'GET') {
+      const tdir = path.join(DATA_DIR, 'uploads', 'traffic');
+      jsonRes(res, 200, { reqId, genai: readJsonIf(path.join(tdir, 'gsc_genai_pull_summary.json')), controls: readJsonIf(path.join(tdir, 'google_controls_audit.json')), attribution_v2: readJsonIf(path.join(tdir, 'attribution_v2.json')), note: 'Generative AI report (page/country/device/date) + Web Performance side-by-side. Web clicks include AI totals — delta != causation. OAuth: scripts/gsc_genai_pull.py.' }, req);
+      return;
+    }
+    if (url.pathname === '/api/crawl' && req.method === 'GET') {
+      jsonRes(res, 200, { reqId, crawl: readJsonIf(path.join(DATA_DIR, 'uploads', 'crawl', 'crawl_truth.json')), note: 'Run: python scripts/crawler_audit.py --site https://example.com [--log access.log]' }, req);
+      return;
+    }
+    if (url.pathname === '/api/fanout' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir ? readJsonIf(path.join(analysisDir, 'pipeline_summary.json')) : null;
+      jsonRes(res, 200, { reqId, fanout: summary?.retrieval_diagnostics || { status: 'no_data', message: 'No retrieval_diagnostics. Enable dynamic_search_context.capture_hidden_queries.' }, analysisDir: analysisDir ? path.basename(analysisDir) : null }, req);
+      return;
+    }
+    if (url.pathname === '/api/ace' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir ? readJsonIf(path.join(analysisDir, 'pipeline_summary.json')) : null;
+      jsonRes(res, 200, { reqId, ace: summary?.ace_predictor || { status: 'no_data', message: 'No ACE scores yet — pipeline emits ace_predictor from site audit pages.' } }, req);
+      return;
+    }
+    if (url.pathname === '/api/surfaces' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir ? readJsonIf(path.join(analysisDir, 'pipeline_summary.json')) : null;
+      jsonRes(res, 200, { reqId, surfaces: summary?.surface_split || { status: 'no_data', message: 'No surface_split yet.' }, rule: 'NEVER average AIO + AI Mode + Gemini into one SoMV.' }, req);
+      return;
+    }
+    if (url.pathname === '/api/verify' && req.method === 'GET') {
+      const run = url.searchParams.get('run') || '';
+      const dir = run ? path.join(OUTPUT_DIR, path.basename(run)) : findLatestAnalysis();
+      if (!dir) { jsonRes(res, 404, { error: 'No run to verify' }, req); return; }
+      try {
+        const out = execFileSync('python', [path.join(ROOT, 'scripts', 'verify_manifest.py'), dir], { timeout: 30000, encoding: 'utf8' });
+        try { writeJob(`verify_${Date.now()}`, { status: 'completed', runId: path.basename(dir) }); } catch {}
+        jsonRes(res, 200, { reqId, run: path.basename(dir), verify: out.slice(0, 4000) }, req);
+      } catch (e) { jsonRes(res, 500, { error: `verify failed: ${e.message}`, reqId }, req); }
+      return;
+    }
+    if (url.pathname === '/api/admin/scim/users' && req.method === 'POST') {
+      if (!requireRole(req, res, 'admin')) return;
+      const body = await readBody(req, 512 * 1024);
+      auditEvent('scim_user_provision', { reqId, bytes: body.length });
+      try { _writeAuditDb('scim_user_provision', { reqId }); } catch {}
+      jsonRes(res, 200, { reqId, scim: 'stub-accepted', note: 'Wire to Entra ID / Okta SCIM in production. Event recorded in audit chain.' }, req);
+      return;
+    }
+    if (url.pathname === '/api/admin/retention' && req.method === 'GET') {
+      if (!requireRole(req, res, 'admin')) return;
+      jsonRes(res, 200, { reqId, retention: { raw_responses_days: 365, trends_db: 'aggregates indefinite', audit_log_days: 730, pii: 'redacted at persist; hash_only_raw optional', export: '/api/export?format=jsonl', doc: 'docs/retention.md' } }, req);
       return;
     }
 

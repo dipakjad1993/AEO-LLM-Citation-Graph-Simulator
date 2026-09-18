@@ -53,7 +53,14 @@
       "description": "SERP API for Google AI Overviews / AI Mode / Copilot (DataForSEO | serper | zenserp). Set SERP_API_KEY + SERP_PROVIDER.",
       "geo": "us",
       "location_map": {
-        "_comment": "Metro DataForSEO location_code overrides by market (lowercase key). Unknown metros fall back to country code and log location_source per row."
+        "_comment": "Metro DataForSEO location_code overrides by market (lowercase key). Unknown metros fall back to country code and log location_source per row.",
+        "us-ny": 1023191,
+        "us-sfo": 1020877,
+        "uk-lnd": 1006886,
+        "eu-fra": 1021793,
+        "apac-sgp": 1062556,
+        "apac-syd": 1040836,
+        "me-dxb": 1023968
       }
     },
     "retry": {

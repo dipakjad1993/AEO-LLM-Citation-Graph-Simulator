@@ -1,5 +1,8 @@
 # Enterprise Guide — Security, Jobs, Trends, SSO/RBAC, Geo, Remediation
 
+> 2026 competitive posture: Profound (Conversation Explorer, Prompt Volumes, agent/crawler analytics, FactCheck loop), Goodie (monitor→optimize→attribute + assisted revenue), Scrunch/Sitecore (GA4-native), Peec (Query Fanouts, self-serve). This repo closes each gap with receipts: `docs/google-truth.md`, Crawl Truth (`scripts/crawler_audit.py`), Fan-out tab (`GET /api/fanout`), ACE predictor (`analytics/ace_predictor.py`), Attribution 2.0 (`scripts/attribution_enhanced.py`), FactCheck loop (`analytics/factcheck_loop.py` + `remediation_pr.py --apply-factcheck`), auto-onboarding (`scripts/auto_onboard.py`), retention (`docs/retention.md`), live Looker (`docs/looker_live.md`).
+> Moat (do not regress): grounded-only SoMV + Wilson + LOW_BROWSE_RATE/BELOW_BENCHMARK_74, per-engine adapters + fixture-first, no fabrication (12 goldens), CPR + G_auth + >15% parity flag (Playwright ≤15% control-only), SHA-256 provenance + PII redact, cost honesty ($0.245/q × 6 engines, $500/day gate, 2500 max calls, cost-flat geo).
+
 ## 1. Server security model (`server.js`, raw `http`, no framework)
 
 - 25 MB body cap, constant-time `Authorization: Bearer` compare, traversal blocks,

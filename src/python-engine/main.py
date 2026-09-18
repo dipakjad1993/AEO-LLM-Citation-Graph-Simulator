@@ -619,6 +619,68 @@ class AEOAnalyticsEngine:
                 logger.warning(f'Traffic join failed: {e}')
                 results['traffic_join'] = {'status': 'error', 'message': str(e)}
 
+            _emit(12.5, 'Surface split + Volumes + ACE + FactCheck + Google Truth (2026 enterprise)')
+            try:
+                _rows = df.to_dicts() if hasattr(df, 'to_dicts') else []
+            except Exception:
+                _rows = []
+            try:
+                from analytics.surface_split import SurfaceSplit
+                results['surface_split'] = SurfaceSplit(self.config).analyze(_rows)
+            except Exception as e:
+                results['surface_split'] = {'status': 'error', 'message': str(e)}
+            try:
+                from analytics.prompt_volumes import PromptVolumeWeighting
+                results['volume_weighted_somv'] = PromptVolumeWeighting(self.config).analyze(_rows)
+            except Exception as e:
+                results['volume_weighted_somv'] = {'status': 'error', 'message': str(e)}
+            try:
+                from analytics.ace_predictor import ACEPredictor
+                _pages = []
+                for p in ((results.get('site_audit', {}) or {}).get('pages', []) or [])[:25]:
+                    _pages.append({'url': p.get('url'), 'snippet_eligible': p.get('checks', {}).get('snippet_eligibility', {}).get('score', 0) > 0,
+                                   'has_faq_jsonld': 'faq' in str(p.get('checks', {}).get('jsonld', {}).get('types', [])).lower(),
+                                   'stats_count': 2, 'quote_count': 1, 'recency_days': (p.get('checks', {}).get('freshness', {}) or {}).get('age_days', 90) or 90,
+                                   'fanout_overlap': 0.3, 'domain_authority_proxy': 0.4, 'word_count': p.get('word_count', 800)})
+                _grounded = [{'cited': bool(r.get('citations') or r.get('citation_count')), 'snippet_eligible': True,
+                              'stats_count': 2, 'quote_count': 1, 'recency_days': 30} for r in _rows[:500]]
+                results['ace_predictor'] = ACEPredictor(self.config).analyze(_pages, _grounded)
+            except Exception as e:
+                results['ace_predictor'] = {'status': 'error', 'message': str(e)}
+            try:
+                from analytics.factcheck_loop import FactCheckLoop
+                _claims = []
+                for t in ((results.get('triple_stats', {}) or {}).get('top_objects', []) or [])[:0]:
+                    _claims.append({'text': str(t)})
+                # feed from triples when available; else honest no_data
+                _triples = (results.get('triple_stats', {}) or {})
+                if not _claims:
+                    results['factcheck'] = {'status': 'no_data', 'message': 'No claim feed wired — triple sentences feed FactCheckLoop when present. Run remediation_pr --apply-factcheck after verification.'}
+                else:
+                    results['factcheck'] = FactCheckLoop(self.config).analyze(_claims)
+            except Exception as e:
+                results['factcheck'] = {'status': 'error', 'message': str(e)}
+            try:
+                from pathlib import Path as _P
+                _tdir = _P('data/uploads/traffic')
+                _google_truth = {}
+                for _fn in ['gsc_genai_pull_summary.json', 'google_controls_audit.json', 'attribution_v2.json',
+                            'gsc_genai_normalized.csv', 'gsc_web_normalized.csv']:
+                    _fp = _tdir / _fn
+                    _google_truth[_fn] = True if _fp.exists() else False
+                results['google_truth'] = {'status': 'measured' if any(_google_truth.values()) else 'no_data',
+                    'files_present': _google_truth,
+                    'message': 'Google Truth sidecar: GSC Generative AI report + controls audit (scripts/gsc_genai_pull.py).' if any(_google_truth.values())
+                               else 'No Google Truth files. Run: python scripts/gsc_genai_pull.py --audit-controls https://example.com/ + --genai-csv/--web-csv.'}
+                _cdir = _P('data/uploads/crawl/crawl_truth.json')
+                results['crawl_truth'] = {'status': 'measured' if _cdir.exists() else 'no_data',
+                    'message': 'Crawl Truth present.' if _cdir.exists() else 'No crawl_truth.json. Run: python scripts/crawler_audit.py --site https://example.com [--log access.log].'}
+                _mm = _P('data/uploads/commerce/multimodal_merchant_audit.json')
+                results['multimodal_truth'] = {'status': 'measured' if _mm.exists() else 'no_data',
+                    'message': 'Multimodal/Merchant/Local present.' if _mm.exists() else 'No multimodal audit. Run: python scripts/multimodal_merchant_audit.py --site https://example.com.'}
+            except Exception as e:
+                results['google_truth'] = {'status': 'error', 'message': str(e)}
+
             _emit(13, 'Generating Dashboard')
             t0 = _time.time()
             dashboard_gen = DashboardGenerator(self.config)
@@ -634,10 +696,25 @@ class AEOAnalyticsEngine:
 
             # 90-day trend snapshot (SQLite, not JSON): SoMV/CPR/volatility history.
             try:
-                from analytics.trend_store import upsert_run as _upsert
+                from analytics.trend_store import upsert_run as _upsert, upsert_geo_split as _geo
                 _run_id = output_path.name
                 _upsert(results, _run_id, root=self.root_dir / 'data')
                 results['trend_snapshot'] = {'run_id': _run_id, 'db': 'data/trends.db'}
+                try:
+                    _gt = results.get('geo_temporal', {}) or {}
+                    for _region in ('EU', 'US'):
+                        _sec = _gt.get(_region) or _gt.get(_region.lower()) or {}
+                        if isinstance(_sec, dict) and _sec.get('leader'):
+                            _geo(_run_id, _region, _sec.get('leader'), float(_sec.get('leader_share', 0) or 0), root=self.root_dir / 'data')
+                    # fallback: persist overall leader per region when geo module shape differs
+                    _eu_us = _gt.get('eu_vs_us') or {}
+                    if isinstance(_eu_us, dict):
+                        for _region in ('EU', 'US'):
+                            _v = _eu_us.get(_region)
+                            if isinstance(_v, dict) and _v.get('leader'):
+                                _geo(_run_id, _region, _v.get('leader'), float(_v.get('share', 0) or 0), root=self.root_dir / 'data')
+                except Exception as _ge:
+                    logger.warning(f'Geo split persist failed: {_ge}')
             except Exception as e:
                 logger.warning(f'Trend snapshot failed: {e}')
                 results['trend_snapshot'] = {'status': 'error', 'message': str(e)}

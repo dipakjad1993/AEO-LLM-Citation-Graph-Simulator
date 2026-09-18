@@ -113,9 +113,15 @@ export class ResponseExtractor {
     let clean = url.replace(/[.,;:!?)]+$/, '');
     try {
       const u = new URL(clean);
+      // UTM-strip on ALL adapters (not just Anthropic) + canonicalization:
+      // lowercase host, strip www., drop fragment, drop trailing slash (root kept as /).
       for (const k of [...u.searchParams.keys()]) {
-        if (/^utm_/i.test(k)) u.searchParams.delete(k);
+        if (/^utm_/i.test(k) || ['gclid', 'fbclid', 'msclkid', 'yclid'].includes(k.toLowerCase())) u.searchParams.delete(k);
       }
+      u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
+      u.hash = '';
+      let p = u.pathname.replace(/\/+$/, '');
+      u.pathname = p || '/';
       clean = u.toString();
     } catch { /* keep as-is */ }
     return clean;
@@ -137,7 +143,14 @@ export class ResponseExtractor {
     const seen = new Map();
     for (const citation of citations) {
       if (!citation?.url) continue;
-      const key = citation.url.toLowerCase().replace(/\/+$/, '');
+      // canonical key: www-stripped, lowercased, no trailing slash (matches cleanUrl)
+      let key = citation.url;
+      try {
+        const u = new URL(citation.url);
+        u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
+        u.hash = '';
+        key = u.toString().replace(/\/+$/, '').toLowerCase();
+      } catch { key = citation.url.toLowerCase().replace(/\/+$/, ''); }
       if (!seen.has(key)) seen.set(key, citation);
       else if (citation.confidence > seen.get(key).confidence) seen.set(key, citation);
     }

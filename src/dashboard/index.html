@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Display:wght@400;500;700&family=Roboto:wght@300;400;500;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<script src="src/dashboard/sections.js"></script>
+<script src="./sections.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -656,6 +656,11 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
           <a href="#res-biases" data-section="res-biases"><span class="nav-num">8</span>Biases</a>
           <a href="#res-recommendations" data-section="res-recommendations"><span class="nav-num">9</span>Recommendations</a>
           <a href="#res-enterprise" data-section="res-enterprise"><span class="nav-num">10</span>Enterprise Intelligence</a>
+          <a href="#res-google-truth" data-section="res-google-truth"><span class="nav-num">G</span>Google Truth</a>
+          <a href="#res-surfaces" data-section="res-surfaces"><span class="nav-num">◈</span>Surfaces</a>
+          <a href="#res-fanout" data-section="res-fanout"><span class="nav-num">⑂</span>Fan-outs</a>
+          <a href="#res-ace" data-section="res-ace"><span class="nav-num">◎</span>ACE Predict</a>
+          <a href="#res-crawl" data-section="res-crawl"><span class="nav-num">🤖</span>Crawl Truth</a>
           <a href="#res-charts" data-section="res-charts"><span class="nav-num">*</span>Charts</a>
           <a href="#res-strategic-summary" data-section="res-strategic-summary"><span class="nav-num">S</span>Strategy</a>
         </nav>
@@ -678,6 +683,11 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
     <div id="res-biases" class="hidden"></div>
     <div id="res-recommendations" class="hidden"></div>
     <div id="res-enterprise" class="hidden"></div>
+    <div id="res-google-truth" class="hidden"></div>
+    <div id="res-surfaces" class="hidden"></div>
+    <div id="res-fanout" class="hidden"></div>
+    <div id="res-ace" class="hidden"></div>
+    <div id="res-crawl" class="hidden"></div>
     <div id="res-charts" class="hidden"></div>
     <div id="res-strategic-summary" class="hidden"></div>
   </div>
@@ -1045,7 +1055,7 @@ function animateCounters(){
   counterAnimated=true;
 }
 
-const SECTION_IDS=['res-exec-summary','res-cmo-dashboard','res-attribution','res-somv','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-enterprise','res-charts','res-strategic-summary'];
+const SECTION_IDS=['res-exec-summary','res-cmo-dashboard','res-attribution','res-somv','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-enterprise','res-google-truth','res-surfaces','res-fanout','res-ace','res-crawl','res-charts','res-strategic-summary'];
 
 function updateResultsNav(){
   const navLinks=document.querySelectorAll('.results-nav a');
@@ -1133,7 +1143,12 @@ async function loadResults(){
     ['res-biases',()=>renderSection8(s)],
     ['res-recommendations',()=>renderSection9(s)],
     ['res-enterprise',()=>renderEnterprise(s)],
-    ['res-strategic-summary',()=>renderStrategicSummary(s)]
+    ['res-strategic-summary',()=>renderStrategicSummary(s)],
+    ['res-google-truth',()=>renderGoogleTruth(s)],
+    ['res-surfaces',()=>renderSurfaces(s)],
+    ['res-fanout',()=>renderFanout(s)],
+    ['res-ace',()=>renderACE(s)],
+    ['res-crawl',()=>renderCrawlTruth(s)]
   ];
   sections.forEach(([id,fn],idx)=>{
     const el=document.getElementById(id);

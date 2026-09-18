@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS somv_history(
 CREATE TABLE IF NOT EXISTS alerts(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, type TEXT,
   payload TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS geo_splits(
+  run_id TEXT, region TEXT, leader TEXT, leader_share REAL,
+  PRIMARY KEY(run_id, region));
+CREATE TABLE IF NOT EXISTS retention_policy(
+  key TEXT PRIMARY KEY, value TEXT);
 """
 
 
@@ -64,6 +69,27 @@ def upsert_run(results: Dict[str, Any], run_id: str, root=None) -> Path:
         con.close()
     logger.info(f'Trend snapshot upserted: {run_id} -> {db}')
     return db
+
+
+def upsert_geo_split(run_id: str, region: str, leader: str, leader_share: float, root=None) -> None:
+    """Persist weekly EU-vs-US leader split (buyers ask for regional proof)."""
+    db = db_path(root)
+    con = sqlite3.connect(db)
+    try:
+        con.executescript(SCHEMA)
+        con.execute('INSERT OR REPLACE INTO geo_splits(run_id, region, leader, leader_share) VALUES(?,?,?,?)',
+                    (run_id, region, leader, leader_share))
+        con.commit()
+    finally:
+        con.close()
+
+
+def get_retention_policy(root=None) -> Dict[str, Any]:
+    """Data retention policy doc (buyers ask before annual contract)."""
+    return {"raw_responses_days": 365, "trends_db": "indefinite (aggregates only)",
+            "audit_log_days": 730, "pii": "redacted at persist (hash_only_raw optional)",
+            "export": "GET /api/export?format=jsonl (full JSONL dump) + DELETE /api/admin/retention (admin)",
+            "doc": "docs/retention.md"}
 
 
 def record_alert(run_id: str, alert_type: str, payload: Dict[str, Any], root=None) -> None:

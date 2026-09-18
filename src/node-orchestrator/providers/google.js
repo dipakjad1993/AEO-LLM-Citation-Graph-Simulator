@@ -49,6 +49,14 @@ export class GoogleProvider {
   async resolveRedirect(url, timeoutMs = 8000) {
     // P0 FIX: HEAD fails with 405/WAF on many publishers -> resolved:false wrongly excluded
     // from SoMV. Fall back to GET with Range:0-0 (1 byte) and follow redirects manually.
+    // ENTERPRISE: in-memory cache + resolve timeout metric (Perplexity-style 21.87 cites/answer
+    // would otherwise throttle). Persist cache to SQLite in future; TTL 24h here.
+    this._resolveCache = this._resolveCache || new Map();
+    this._resolveMetrics = this._resolveMetrics || { hits: 0, misses: 0, timeouts: 0, ms_total: 0 };
+    const cached = this._resolveCache.get(url);
+    if (cached && Date.now() - cached.at < 24 * 3600 * 1000) { this._resolveMetrics.hits++; return cached.value; }
+    this._resolveMetrics.misses++;
+    const t0 = Date.now();
     const tryFetch = async (method, headers = {}) => {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -60,9 +68,14 @@ export class GoogleProvider {
     try {
       let finalUrl = await tryFetch('HEAD');
       if (finalUrl === url) finalUrl = await tryFetch('GET', { Range: 'bytes=0-0' });
-      return { url: finalUrl, resolved: finalUrl !== url, redirect_chain: finalUrl !== url };
+      const value = { url: finalUrl, resolved: finalUrl !== url, redirect_chain: finalUrl !== url, resolve_ms: Date.now() - t0 };
+      this._resolveMetrics.ms_total += value.resolve_ms;
+      if (this._resolveCache.size > 2000) this._resolveCache.delete(this._resolveCache.keys().next().value);
+      this._resolveCache.set(url, { at: Date.now(), value });
+      return value;
     } catch {
-      return { url, resolved: false, redirect_chain: false, resolve_error: true };
+      this._resolveMetrics.timeouts++;
+      return { url, resolved: false, redirect_chain: false, resolve_error: true, resolve_ms: Date.now() - t0 };
     }
   }
   async resolveAll(citations, concurrency = 5) {
