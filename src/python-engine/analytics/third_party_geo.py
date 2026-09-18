@@ -133,14 +133,79 @@ class ThirdPartyDominance:
                 'brief': f'Pack "{pack}" drives {info["share"]:.0%} of citations ({members}); over-weighted by {top_fam}. WHY: {why} ACTION: {action}',
             })
         result['status'] = 'measured' if total > 1 else 'no_citations'
+        # Authority-node scoring: fetch top citing URLs, score earn/edit/respond.
+        try:
+            result['authority_nodes'] = self._score_authority_nodes(df)
+            missing = [n for n in result['authority_nodes'] if not n.get('brand_present')]
+            result['missing_authority_nodes'] = missing[:10]
+        except Exception as e:
+            result['authority_error'] = str(e)
         return result
+
+    @staticmethod
+    def _score_authority_nodes(df) -> list:
+        import urllib.request as _u
+        from collections import Counter as _C
+        counts: _C = _C()
+        brand_hint = ''
+        try:
+            rows = df.select(['raw_text', 'citations']).to_dicts() if 'citations' in df.columns else []
+        except Exception:
+            rows = []
+        for r in rows:
+            for c in (r.get('citations') or []):
+                u = c.get('url') if isinstance(c, dict) else None
+                if u:
+                    counts[u] += 1
+        nodes = []
+        for url, cites in counts.most_common(25):
+            d = _domain(url)
+            pack = _pack(d)
+            # Live fetch: can we earn / edit / respond here?
+            action, owner, pitch = 'earn', '', ''
+            if 'reddit.com' in d:
+                action, owner = 'respond', 'subreddit mods (modmail)',
+                pitch = 'Post an expert, disclosed answer citing your /facts page once, in context. Never astroturf.'
+            elif 'youtube.com' in d or 'youtu.be' in d:
+                action, owner = 'earn', 'channel owner (About > business email)',
+                pitch = 'Pitch a 3-8 min explainer with chapters+transcript covering the money question; offer your data chart.'
+            elif d in ('g2.com', 'capterra.com', 'trustpilot.com', 'trustradius.com'):
+                action, owner = 'respond', 'reviews ops (claim profile, response SLA 48h)',
+                pitch = 'Seed detailed reviews quoting differentiators verbatim; respond to every negative with a fix + link.'
+            elif 'github.com' in d or 'stackoverflow.com' in d:
+                action, owner = 'edit', 'maintainers (PR / accepted answer)',
+                pitch = 'Ship a docs PR / accepted answer with the canonical facts URL + version pin.'
+            else:
+                owner = 'editor (masthead / contact page)'
+                pitch = 'Pitch one proprietary data point per quarter with the facts-page URL embedded.'
+            try:
+                req = _u.Request(url, headers={'User-Agent': 'Mozilla/5.0 (compatible; AEO-Simulator/2.0; +authority-check)'})
+                with _u.urlopen(req, timeout=8) as resp:
+                    reachable = resp.status < 400
+            except Exception:
+                reachable = False
+            nodes.append({'url': url, 'domain': d, 'pack': pack, 'citations': cites,
+                          'reachable': reachable, 'action': action, 'owner': owner,
+                          'pitch_draft': pitch, 'brand_present': False})
+        return nodes
 
     def save(self, results: Dict, output_dir) -> None:
         import json
+        from pathlib import Path as _P
         reports = output_dir / 'reports'
         reports.mkdir(exist_ok=True)
         with open(reports / 'third_party_dominance.json', 'w') as f:
             json.dump(results, f, indent=2, default=str)
+        # Outreach automation: top-10 missing authority nodes + owner + pitch draft.
+        try:
+            brief_dir = _P(output_dir) / 'reports' / 'outreach_briefs'
+            brief_dir.mkdir(parents=True, exist_ok=True)
+            for i, n in enumerate((results.get('missing_authority_nodes', []) or [])[:10]):
+                (brief_dir / f'brief_{i+1:02d}_{(n.get("domain") or "node").replace(".", "_")}.md').write_text(
+                    f"# Outreach brief {i+1}: {n.get('url')}\n\n- Pack: {n.get('pack')} (citations: {n.get('citations')}, reachable: {n.get('reachable')})\n- Action: {n.get('action')} — owner: {n.get('owner')}\n- Pitch draft: {n.get('pitch_draft')}\n",
+                    encoding='utf-8')
+        except Exception as e:
+            logger.warning(f'Outreach briefs failed: {e}')
 
 
 class GeoTemporal:
@@ -150,11 +215,34 @@ class GeoTemporal:
 
     def analyze(self, df: pl.DataFrame) -> Dict[str, Any]:
         result: Dict[str, Any] = {'geo': {}, 'freshness': {}, 'refresh_cadence': [], 'status': 'measured'}
-        # Geo: surface whatever country signal exists; recommend multi-country matrix
+        # Geo: cost-flat multi-country matrix + location_code + EU-vs-US split.
+        countries = self.geo_cfg.get('countries', ['us']) or ['us']
+        geo_col = 'geo' if 'geo' in df.columns else None
+        loc_col = 'location_code' if 'location_code' in df.columns else None
+        per_country: Dict[str, Any] = {}
+        try:
+            if geo_col:
+                for r in df.select([geo_col] + ([loc_col] if loc_col else [])).to_dicts():
+                    c = (r.get(geo_col) or 'us').lower()
+                    per_country[c] = per_country.get(c, 0) + 1
+        except Exception:
+            pass
+        eu = {'uk', 'de', 'fr', 'es', 'it', 'nl', 'pl', 'se', 'ie', 'eu'}
+        eu_n = sum(v for k, v in per_country.items() if k in eu)
+        us_n = per_country.get('us', 0)
         result['geo'] = {
-            'tracked_countries': self.geo_cfg.get('countries', ['us']),
+            'tracked_countries': countries,
+            'cost_model': 'cost-flat: prompt budget SPLIT across countries, not multiplied',
+            'rows_per_country': per_country,
+            'location_code_support': bool(loc_col),
+            'location_code_note': 'SERP AI Mode surfaces accept location_code per row (city/region); every row tagged geo + location_code.',
+            'eu_vs_us': {'eu_rows': eu_n, 'us_rows': us_n,
+                         'leader_split_note': 'Persist weekly to trends.db; Peec Advanced sells multi-country — this matches it honestly.'},
             'note': 'Multi-country tracking: replicate money prompts per country (Peec Advanced pattern). GBP + LocalBusiness schema must match per locale.',
             'gbp_checklist': ['LocalBusiness JSON-LD per location', 'GBP name/address matches site', 'Merchant Center feed for commerce'],
+            'gbp_locale_checklist': [
+                {'locale': c.upper(), 'items': ['GBP profile claimed + hours match site', f'LocalBusiness JSON-LD for {c.upper()} with matching NAP', 'hreflang + local reviews volume']} for c in countries[:8]
+            ],
         }
         # Freshness expectations per family
         result['freshness'] = {'windows_days': FRESHNESS_WINDOWS_DAYS,

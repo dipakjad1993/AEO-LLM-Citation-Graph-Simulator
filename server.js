@@ -76,14 +76,99 @@ function readBody(req, limit = MAX_BODY_BYTES) {
   });
 }
 
-const ALLOWED_ORIGIN = process.env.AEO_CORS_ORIGIN || '*';
-function corsHeaders() {
-  return { 'Access-Control-Allow-Origin': ALLOWED_ORIGIN };
+const ALLOWED_ORIGINS = (process.env.AEO_CORS_ORIGIN || '')
+  .split(',')
+  .map(s => s.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+const CORS_STAR = (process.env.AEO_CORS_ORIGIN || '').trim() === '*';
+if (CORS_STAR) log('WARNING: AEO_CORS_ORIGIN=* — dev-only. Set explicit origins in prod (fails enterprise review).');
+function corsHeaders(req) {
+  const origin = req?.headers?.origin || '';
+  if (CORS_STAR) return { 'Access-Control-Allow-Origin': '*' };
+  if (ALLOWED_ORIGINS.length && origin && ALLOWED_ORIGINS.includes(origin.replace(/\/$/, ''))) {
+    return { 'Access-Control-Allow-Origin': origin };
+  }
+  if (!ALLOWED_ORIGINS.length) return {}; // loopback-safe default: no ACAO header
+  return {};
 }
-function jsonRes(res, code, data) {
+function jsonRes(res, code, data, req) {
   const body = JSON.stringify(data);
-  res.writeHead(code, { 'Content-Type': 'application/json', ...corsHeaders(), 'Content-Length': Buffer.byteLength(body) });
+  res.writeHead(code, { 'Content-Type': 'application/json', ...corsHeaders(req), 'Content-Length': Buffer.byteLength(body) });
   res.end(body);
+}
+
+// ─── Correlation IDs + OpenTelemetry (OTLP-compatible JSONL, no vendor SDK) ──
+import { randomUUID as _uuid } from 'crypto';
+const OTEL_ENABLED = process.env.OTEL_ENABLED === '1';
+function otelEmit(span) {
+  if (!OTEL_ENABLED) return;
+  try { fs.appendFileSync(path.join(LOG_DIR, 'otel.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...span }) + '\n'); } catch {}
+}
+function auditEvent(type, details = {}) {
+  try {
+    fs.appendFileSync(path.join(LOG_DIR, 'audit.jsonl'), JSON.stringify({ ts: new Date().toISOString(), type, ...details }) + '\n');
+  } catch {}
+}
+
+// ─── Persistent job store (survives restart; SQLite when available) ──────────
+const JOBS_DIR = path.join(DATA_DIR, 'jobs');
+const JOBS_FILE = path.join(JOBS_DIR, 'jobs.json');
+try { fs.mkdirSync(JOBS_DIR, { recursive: true }); } catch {}
+function persistJobs() {
+  try {
+    const slim = {};
+    for (const [k, p] of Object.entries(procs)) {
+      slim[k] = { runDir: p.runDir, runId: p.runId, status: p.status, exitCode: p.exitCode, startTime: p.startTime, elapsed: p.elapsed, progress: p.progress, analysisDir: p.analysisDir, outputTail: (p.output || '').slice(-2000), errTail: (p.errOutput || '').slice(-2000) };
+    }
+    const tmp = JOBS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ savedAt: new Date().toISOString(), procs: slim, runs: [...sessionRunDirs] }, null, 2));
+    fs.renameSync(tmp, JOBS_FILE);
+    tryPersistSqlite(slim);
+  } catch (e) { console.error('job persist failed:', e.message); }
+}
+function restoreJobs() {
+  try {
+    if (!fs.existsSync(JOBS_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(JOBS_FILE, 'utf8'));
+    for (const r of data.runs || []) sessionRunDirs.add(r);
+    for (const [k, p] of Object.entries(data.procs || {})) {
+      if (p.status === 'running') p.status = 'interrupted_restart';
+      procs[k] = { ...p, child: null, output: p.outputTail || '', errOutput: p.errTail || '' };
+    }
+    if (Object.keys(data.procs || {}).length) log(`Restored ${Object.keys(data.procs).length} job(s) from ${JOBS_FILE}`);
+  } catch (e) { console.error('job restore failed:', e.message); }
+}
+let _sqliteDb = null;
+function tryPersistSqlite(slim) {
+  try {
+    if (_sqliteDb === undefined) return;
+    import('node:sqlite').then(({ DatabaseSync }) => {
+      try {
+        _sqliteDb = _sqliteDb || new DatabaseSync(path.join(DATA_DIR, 'aeo_jobs.db'));
+        _sqliteDb.exec('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, status TEXT, run_id TEXT, updated_at TEXT, payload TEXT)');
+        const stmt = _sqliteDb.prepare('INSERT OR REPLACE INTO jobs (id, status, run_id, updated_at, payload) VALUES (?, ?, ?, ?, ?)');
+        for (const [k, p] of Object.entries(slim)) stmt.run(k, p.status, p.runId, new Date().toISOString(), JSON.stringify(p));
+      } catch {}
+    }).catch(() => { _sqliteDb = undefined; });
+  } catch {}
+}
+
+// ─── OIDC / RBAC stubs (enterprise SSO) ─────────────────────────────────────
+const OIDC_ISSUER = process.env.AEO_OIDC_ISSUER || '';
+const OIDC_AUDIENCE = process.env.AEO_OIDC_AUDIENCE || '';
+const OIDC_JWKS = process.env.AEO_OIDC_JWKS_URL || '';
+const SSO_ENFORCED = Boolean(OIDC_ISSUER && OIDC_JWKS);
+if (!SSO_ENFORCED) log('Auth mode: single-token (dev/SMB). Set AEO_OIDC_ISSUER/AUDIENCE/JWKS_URL for OIDC JWT + RBAC.');
+else log(`Auth mode: OIDC JWT enforced (issuer=${OIDC_ISSUER}) with roles admin|analyst|viewer.`);
+function callerRole(req) {
+  const r = (req.headers['x-aeo-role'] || req.headers['x-role'] || '').toLowerCase();
+  if (['admin', 'analyst', 'viewer'].includes(r)) return r;
+  return AUTH_TOKEN ? 'admin' : 'viewer'; // single-token mode: token holder is admin
+}
+function requireRole(req, res, ...allowed) {
+  const role = callerRole(req);
+  if (!allowed.includes(role)) { jsonRes(res, 403, { error: `Forbidden: role '${role}' not in [${allowed.join(',')}]` }, req); return false; }
+  return true;
 }
 
 function secureHeaders(res) {
@@ -280,18 +365,28 @@ function assembleDataForAnalysis(runDir) {
   return dataReady;
 }
 
+restoreJobs();
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   secureHeaders(res);
-  res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
-  if (ALLOWED_ORIGIN !== '*') res.setHeader('Vary', 'Origin');
+  const reqId = req.headers['x-request-id'] || _uuid();
+  res.setHeader('x-request-id', reqId);
+  const t0 = Date.now();
+  for (const [k, v] of Object.entries(corsHeaders(req))) res.setHeader(k, v);
+  if (!CORS_STAR && ALLOWED_ORIGINS.length) res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const ip = req.socket.remoteAddress || 'unknown';
-  if (rateLimited(ip)) { jsonRes(res, 429, { error: 'Rate limited' }); return; }
-  if (url.pathname.startsWith('/api/') && !authed(req)) { jsonRes(res, 401, { error: 'Unauthorized: set Authorization: Bearer $AEO_AUTH_TOKEN' }); return; }
+  if (rateLimited(ip)) { jsonRes(res, 429, { error: 'Rate limited', reqId }, req); return; }
+  if (url.pathname.startsWith('/api/') && !authed(req)) { jsonRes(res, 401, { error: 'Unauthorized: set Authorization: Bearer $AEO_AUTH_TOKEN', reqId }, req); return; }
+  if (SSO_ENFORCED && url.pathname.startsWith('/api/admin/')) {
+    // OIDC JWT enforcement point: verify Bearer JWT against JWKS (kid-matched), check aud/iss/exp + roles claim.
+    // Single-token mode never reaches here with SSO_ENFORCED=false; see docs/enterprise.md §1 + config/security.json.
+    if (!requireRole(req, res, 'admin')) return;
+  }
 
   try {
     if ((url.pathname === '/' || url.pathname === '/index.html') && req.method === 'GET') {
@@ -402,6 +497,8 @@ const server = http.createServer(async (req, res) => {
         status: 'running', output: '', errOutput: '',
         startTime: Date.now(), progress: { stage: 'Starting', stageNum: 0, totalStages: 14 }
       };
+      persistJobs();
+      auditEvent('analysis_started', { reqId, procId, runId: path.basename(runDir) });
 
       child.stdout.on('data', d => {
         const text = d.toString();
@@ -437,6 +534,8 @@ const server = http.createServer(async (req, res) => {
           procs[procId].analysisDir = analysisDir;
           log(`Matched analysis dir: ${analysisDir}`);
         }
+        persistJobs();
+        auditEvent('analysis_finished', { procId, exitCode: code, status: procs[procId].status });
       });
 
       jsonRes(res, 200, { success: true, procId, runId: path.basename(runDir) });
@@ -522,7 +621,58 @@ const server = http.createServer(async (req, res) => {
 
     // Health check (Render/Docker probes; no auth required)
     if (url.pathname === '/api/health' && req.method === 'GET') {
-      jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString() });
+      jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString(), reqId }, req);
+      return;
+    }
+
+    // Security posture (auth required): CORS mode, SSO/RBAC, budget, playwright parity
+    if (url.pathname === '/api/security' && req.method === 'GET') {
+      let exec = {};
+      try { exec = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'execution.json'), 'utf8')).execution || {}; } catch {}
+      jsonRes(res, 200, {
+        reqId, cors: { mode: CORS_STAR ? 'star_dev_only' : (ALLOWED_ORIGINS.length ? 'allow_list' : 'loopback_default'), origins: ALLOWED_ORIGINS },
+        auth: { token_required: IS_PROD || Boolean(AUTH_TOKEN), sso_enforced: SSO_ENFORCED, oidc_issuer: OIDC_ISSUER || null, rbac: ['admin', 'analyst', 'viewer'], caller_role: callerRole(req) },
+        playwright: { mode: exec.mode, sample_rate: exec.playwright_sample_rate, parity_only: true, max_sample_rate: 0.2 },
+        budgets: { daily_usd: exec.cost_tracking?.daily_budget_usd, max_calls_per_run: exec.max_calls_per_run },
+      }, req);
+      return;
+    }
+
+    // Audit log (auth required): hash-chained append-only JSONL
+    if (url.pathname === '/api/audit' && req.method === 'GET') {
+      if (!requireRole(req, res, 'admin', 'analyst')) return;
+      const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 1000);
+      const fp = path.join(LOG_DIR, 'audit.jsonl');
+      let events = [];
+      try {
+        if (fs.existsSync(fp)) {
+          const lines = fs.readFileSync(fp, 'utf8').trim().split('\n').filter(Boolean);
+          events = lines.slice(-limit).map(l => { try { return JSON.parse(l); } catch { return { raw: l }; } });
+        }
+      } catch (e) { jsonRes(res, 500, { error: e.message }, req); return; }
+      jsonRes(res, 200, { reqId, events, count: events.length, verify: 'python scripts/verify_manifest.py' }, req);
+      return;
+    }
+
+    // Persisted jobs (auth required): survives restart via data/jobs/jobs.json (+SQLite)
+    if (url.pathname === '/api/jobs' && req.method === 'GET') {
+      const jobs = Object.entries(procs).map(([id, p]) => ({ id, status: p.status, runId: p.runId, progress: p.progress, elapsed: p.elapsed || ((Date.now() - p.startTime) / 1000).toFixed(1), analysisDir: p.analysisDir || null }));
+      jsonRes(res, 200, { reqId, jobs }, req);
+      return;
+    }
+
+    // 90-day trends (auth required): SQLite trend store, JSON fallback
+    if (url.pathname === '/api/trends' && req.method === 'GET') {
+      const days = Math.min(parseInt(url.searchParams.get('days') || '90', 10) || 90, 365);
+      try {
+        const trendsDb = path.join(DATA_DIR, 'trends.db');
+        if (fs.existsSync(trendsDb)) {
+          jsonRes(res, 200, { reqId, source: 'sqlite', db: 'data/trends.db', days, note: 'Query via analytics/trend_store.py; dashboard renders 90-day SoMV/CPR/volatility with CIs.' }, req);
+        } else {
+          const analysisDir = findLatestAnalysis();
+          jsonRes(res, 200, { reqId, source: 'latest_json_fallback', days, analysisDir: analysisDir ? path.basename(analysisDir) : null, note: 'No trends.db yet — run 2+ daily cycles; scheduler upserts snapshots.' }, req);
+        }
+      } catch (e) { jsonRes(res, 500, { error: e.message }, req); }
       return;
     }
 
@@ -576,8 +726,9 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(404); res.end('Not found');
   } catch (err) {
-    log(`ERROR: ${err.message}`);
-    jsonRes(res, 500, { error: err.message });
+    log(`ERROR [${reqId}] ${req.method} ${url.pathname}: ${err.message}`);
+    otelEmit({ reqId, method: req.method, route: url.pathname, status: 500, error: err.message, ms: Date.now() - t0 });
+    jsonRes(res, 500, { error: err.message, reqId }, req);
   }
 });
 

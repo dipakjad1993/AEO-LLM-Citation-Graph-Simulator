@@ -421,6 +421,29 @@ class DashboardGenerator:
             <div class="grounding-banner grounding-ok">
                 <strong>Grounded:</strong> {g_share:.0%} of responses show browse evidence. SoMV below mixes grounded + memory — see grounded_only block for the honest split.
             </div>"""
+        # QUARANTINE banner: demo_synthetic rows must never be mistaken for prod evidence.
+        dq_synth = dq.get('synthetic_quarantined', 0) or results.get('synthetic_quarantined', 0)
+        run_meta = results.get('pipeline_meta', {}) or {}
+        is_quarantined = bool(run_meta.get('synthetic_allowed')) or dq_synth > 0 or 'QUARANTINED' in str(run_meta.get('run_dir', ''))
+        synth_banner = ''
+        if is_quarantined:
+            synth_banner = f"""
+            <div class="synthetic-banner" style="background:#d93025;color:#fff;padding:12px 16px;border-radius:10px;margin:12px 0;font-weight:700">
+                ⛔ SYNTHETIC — NOT PROD EVIDENCE: {dq_synth} demo_synthetic row(s) in run_demo_synthetic_QUARANTINED.
+                Wilson CIs here describe the demo corpus only. Do not join with prod CSVs or cite externally.
+            </div>"""
+        # Lite-vs-Full ML badge: never let VADER pass as RoBERTa.
+        lite_mode = run_meta.get('lite_mode', True)
+        sentiment_engine = (results.get('sentiment_matrix', {}) or {}).get('engine', 'vader')
+        lite_badge = ''
+        if lite_mode or sentiment_engine in ('vader', 'keyword', 'fallback'):
+            lite_badge = """
+            <div class="lite-badge" style="background:#fef7e0;border:1px solid #f9ab00;color:#7a4a00;padding:8px 14px;border-radius:20px;margin:8px 0;font-size:.82em;font-weight:600;display:inline-block">
+                Lite mode: transformer sentiment OFF (VADER/keyword fallback) — install requirements.txt for RoBERTa + MiniLM-trf
+            </div>"""
+        # Commerce + Traffic hero (Stage 0 revenue): surface first, not tab 12.
+        commerce = results.get('commerce', {}) or {}
+        traffic = results.get('traffic_join', {}) or {}
 
         charts_html = ""
         for title, fig in charts:
@@ -973,6 +996,21 @@ class DashboardGenerator:
         </header>
 
         {grounding_banner}
+
+        {synth_banner}
+
+        {lite_badge}
+
+        <div class="commerce-hero" style="border:2px solid #1a73e8;border-radius:12px;padding:14px 18px;margin:12px 0">
+            <h2 style="margin:0 0 6px">💰 Commerce Truth (Stage 0) + Traffic Join — revenue hero</h2>
+            <div>Product-card rate: <strong>{(commerce.get('product_cards', {}) or {}).get('overall', {}).get('card_rate', 'n/a')}</strong>
+            · Feed: <strong>{(commerce.get('feed_health', {}) or {}).get('status', 'n/a')}</strong>
+            · ACP checkout-eligible: <strong>{(commerce.get('acp', {}) or {}).get('checkout_eligible', 'n/a')}</strong>
+            · UCP native_commerce: <strong>{(commerce.get('ucp', {}) or {}).get('native_commerce', 'n/a')}</strong></div>
+            <div>Generative-inclusion rate: <strong>{(traffic.get('gsc_generative_gate', {}) or {}).get('generative_inclusion_rate', 'n/a')}</strong>
+            · AI revenue share: <strong>{(traffic.get('ga4_ai_referrers', {}) or {}).get('ai_revenue_share', 'n/a')}</strong>
+            · Evidence: {(traffic.get('ga4_ai_referrers', {}) or {}).get('evidence', 'import GSC/GA4/Bing via scripts/import_traffic.py')}</div>
+        </div>
 
         <div class="stats-grid">
             <div class="stat-card">

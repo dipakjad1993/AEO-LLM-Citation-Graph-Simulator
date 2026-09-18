@@ -1,0 +1,33 @@
+# uv.lock — pinned Python dependency set (2026-09 enterprise reproducibility)
+# Generated for Python >=3.11. Install: `uv sync` or `pip install -r requirements.lock.txt`.
+# Lite profile is default (offline MiniLM/keyword + VADER fallbacks).
+# Full profile adds torch/transformers/umap/hdbscan (see requirements.txt).
+# If you change requirements-*.txt, regenerate: `uv lock && uv export -o requirements.lock.txt`
+package-version = "2.0.0"
+requires-python = ">=3.11"
+[[profile]]  # lite (default)
+polars==1.1.0
+networkx==3.3
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.0
+spacy==3.7.5
+pydantic==2.7.4
+python-dotenv==1.0.1
+rich==13.7.1
+jinja2==3.1.4
+pyvis==0.3.2
+tiktoken==0.7.0
+httpx==0.27.1
+aiohttp==3.9.5
+matplotlib==3.9.2
+seaborn==0.13.2
+[[profile-full]]  # heavy ML extras (lazy-loaded, optional)
+sentence-transformers==3.0.1
+torch==2.3.1
+tokenizers==0.19.1
+transformers==4.41.2
+umap-learn==0.5.6
+hdbscan==0.8.33
+plotly==5.22.0
+fsspec==2024.5.0

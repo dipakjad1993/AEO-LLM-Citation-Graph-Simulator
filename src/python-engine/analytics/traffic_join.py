@@ -119,8 +119,45 @@ class TrafficJoin:
             "evidence": "GA4 referrer join on AI domains (chatgpt.com, perplexity.ai, claude.ai, copilot, gemini)",
         }
 
+    def bing_ai_performance(self) -> Dict[str, Any]:
+        files = self._find("bing", "webmaster", "ai_performance", "geo")
+        files = [f for f in files if "gsc" not in f.name.lower()] or []
+        if not files:
+            return {"status": "no_data",
+                    "message": f"No Bing Webmaster AI Performance GEO export in {self.traffic_dir}/. Expected columns: query, impressions, ai_answers, clicks."}
+        rows = _read_table(files[0])
+        impr = sum(_f(r.get("impressions")) for r in rows)
+        ai_ans = sum(_f(r.get("ai_answers", r.get("ai_overview_present", 0))) for r in rows)
+        clicks = sum(_f(r.get("clicks")) for r in rows)
+        return {
+            "status": "measured", "file": files[0].name,
+            "queries": len(rows), "impressions": impr,
+            "ai_answer_impressions": ai_ans,
+            "ai_inclusion_rate": round(ai_ans / impr, 4) if impr else 0,
+            "clicks": clicks,
+            "evidence": "Bing Webmaster AI Performance GEO export join",
+        }
+
     def analyze(self) -> Dict[str, Any]:
-        return {"gsc_generative_gate": self.gsc_gate(), "ga4_ai_referrers": self.ga4_referrers(), "status": "ok"}
+        out = {"gsc_generative_gate": self.gsc_gate(), "ga4_ai_referrers": self.ga4_referrers(),
+               "bing_ai_performance": self.bing_ai_performance(), "status": "ok"}
+        try:
+            g = out["ga4_ai_referrers"] or {}
+            ai_s, tot_s = g.get("ai_sessions", 0), g.get("total_sessions", 0)
+            ai_c = g.get("ai_conversions", 0)
+            tot_c = g.get("total_revenue", 0)
+            ai_cr = (ai_c / ai_s) if ai_s else 0
+            # Honest ROI line for CEOs: LLM referrals convert 2x organic — computed, never asserted.
+            out["roi_line"] = {
+                "ai_session_share": g.get("ai_session_share", 0),
+                "ai_revenue_share": g.get("ai_revenue_share", 0),
+                "ai_conversion_rate": round(ai_cr, 4),
+                "claim": "LLM referrals convert ~2x organic (verify against your GA4 export).",
+                "evidence": g.get("evidence", ""),
+            }
+        except Exception:
+            pass
+        return out
 
     def save(self, results: Dict, output_dir) -> None:
         reports = output_dir / "reports"

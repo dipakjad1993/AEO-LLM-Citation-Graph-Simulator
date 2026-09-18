@@ -93,7 +93,10 @@
     "playwright": {
       "headless": true,
       "stealth_mode": true,
-      "warning": "Playwright web-UI collection is OPT-IN: stealth + residential proxy required, account ToS risk. API vs UI diverge — use only as 20% parity control group.",
+      "parity_only": true,
+      "max_sample_rate": 0.2,
+      "warning": "PARITY CONTROL ONLY (<=15-20% sample, ToS risk): automating ChatGPT/Claude/Gemini web UIs may violate provider ToS, requires stealth + residential proxy + authenticated cookies, breaks weekly, costs ~16x API. Default mode is api_only. hybrid = 85% API + 15% Playwright parity calibration. playwright_only is debug-only, NEVER production tracking. API vs UI variance >15% raises parity_variance flag — investigate, do not average.",
+      "tos_acknowledged": false,
       "proxy": {
         "enabled": false,
         "server": "",

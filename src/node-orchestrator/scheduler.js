@@ -64,6 +64,16 @@ export function checkAlerts() {
   if (hal > prevHal && hal > 0) alerts.push({ type: 'hallucination_spike', current: hal, previous: prevHal });
   const cpr = cur.summary?.enterprise_insights?.multi_turn_cpr?.overall_cpr;
   if (typeof cpr === 'number' && cpr < 0.5) alerts.push({ type: 'cpr_low', cpr });
+  // P0 snippet fail gate (Google May-15 Guide): blocked = AIO visibility 0.
+  const blocked = cur.summary?.site_audit?.fail_gate?.snippet_blocked;
+  if (blocked) alerts.push({ type: 'snippet_blocked', pages: cur.summary.site_audit.fail_gate.blocked_pages || [], precedent: 'Meltwater +73% after fix' });
+  // Volatility HIGH flag: unstable_share > 30%.
+  const unstable = cur.summary?.volatility?.summary?.unstable_share;
+  if (typeof unstable === 'number' && unstable > 0.3) alerts.push({ type: 'volatility_high', unstable_share: unstable });
+  // Playwright parity guard: never let the control group exceed 20% silently.
+  const execMode = JSON.parse(readFileSync(join(ROOT, 'config', 'execution.json'), 'utf8')).execution || {};
+  if ((execMode.playwright_sample_rate ?? 0.15) > 0.2) alerts.push({ type: 'playwright_over_sample', rate: execMode.playwright_sample_rate });
+  // Note: latest-vs-previous diff is Slack-only; 90-day history lives in data/trends.db (analytics/trend_store.py).
 
   if (alerts.length) {
     console.log(`ALERTS (${alerts.length}):`);

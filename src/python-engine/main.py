@@ -355,6 +355,8 @@ class AEOAnalyticsEngine:
             'grounded_responses': grounded_count,
             'ungrounded_responses': ungrounded_count,
             'grounded_share': round(grounded_count / n, 4) if n else 0,
+            'synthetic_quarantined': 0,
+            'synthetic_note': 'Prod default quarantines demo_synthetic rows; run_demo_synthetic_QUARANTINED requires AEO_ALLOW_SYNTHETIC=1.',
             'records_with_brand_mention': len(brands_mentioned),
             'unique_models': sorted(models),
             'channels': sorted(channels),
@@ -390,6 +392,25 @@ class AEOAnalyticsEngine:
             df = self.load_results(run_dir)
             results['total_records'] = len(df)
             results['successful_records'] = df.filter(pl.col('success') == True).height
+            # Pipeline meta: Lite-vs-Full badge + quarantine provenance (enterprise honesty).
+            try:
+                import importlib.util as _ilu
+                _has_torch = _ilu.find_spec('torch') is not None and _ilu.find_spec('transformers') is not None
+            except Exception:
+                _has_torch = False
+            try:
+                import os as _ose
+                _synth_allowed = _ose.environ.get('AEO_ALLOW_SYNTHETIC', '') == '1'
+            except Exception:
+                _synth_allowed = False
+            results['pipeline_meta'] = {
+                'lite_mode': not _has_torch,
+                'ml_profile': 'full' if _has_torch else 'lite',
+                'ml_note': 'RoBERTa/MiniLM-trf enabled' if _has_torch else 'Lite mode: transformer sentiment OFF (VADER/keyword fallback)',
+                'synthetic_allowed': _synth_allowed,
+                'run_dir': str(run_dir or ''),
+                'quarantined_dir': 'QUARANTINED' in str(run_dir or ''),
+            }
 
             if results['successful_records'] == 0:
                 raise ValueError(
@@ -415,6 +436,19 @@ class AEOAnalyticsEngine:
 
             _emit(1, f'Attribution Classification (RAG vs Base) — {results["successful_records"]} records, {results.get("data_quality", {}).get("citation_count", 0)} citations')
             t0 = _time.time()
+            # STAGE 0 PREFLIGHT — Commerce Truth first (revenue hero, not stage 12):
+            # feed health + ACP/UCP/Rufus are df-independent and gate shopping visibility.
+            try:
+                from analytics.commerce import CommerceAnalyzer as _CA0
+                _ca0 = _CA0(self.config, run_dir=str(run_dir) if run_dir else None)
+                results['commerce_preflight'] = {
+                    'feed_health': _ca0.feed_health(),
+                    'protocols': _ca0.protocol_checks(),
+                    'stage': 'stage_0_preflight',
+                }
+            except Exception as e:
+                logger.warning(f'Commerce Stage-0 preflight failed: {e}')
+                results['commerce_preflight'] = {'status': 'error', 'message': str(e)}
             attr_classifier = AttributionClassifier(self.config)
             df = attr_classifier.classify(df)
             results['attribution_stats'] = attr_classifier.get_stats(df)
@@ -568,6 +602,16 @@ class AEOAnalyticsEngine:
             recommendations = self.generate_recommendations(results)
             results['recommendations'] = recommendations
             _emit(14, f'Recommendations done ({_time.time()-t0:.1f}s)')
+
+            # 90-day trend snapshot (SQLite, not JSON): SoMV/CPR/volatility history.
+            try:
+                from analytics.trend_store import upsert_run as _upsert
+                _run_id = output_path.name
+                _upsert(results, _run_id, root=self.root_dir / 'data')
+                results['trend_snapshot'] = {'run_id': _run_id, 'db': 'data/trends.db'}
+            except Exception as e:
+                logger.warning(f'Trend snapshot failed: {e}')
+                results['trend_snapshot'] = {'status': 'error', 'message': str(e)}
 
             summary_path = output_path / 'pipeline_summary.json'
             with open(summary_path, 'w', encoding='utf-8') as f:
@@ -1256,6 +1300,37 @@ class AEOAnalyticsEngine:
                 'priority': 'MEDIUM', 'category': f"Earned-Media Pack: {brief.get('pack')}",
                 'finding': brief.get('brief', ''),
                 'action': 'Execute the outreach brief: seed expert content on the pack domains and link to canonical facts pages.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # ─── MODULE 15: Snippet fail gate (P0) + Commerce Stage 0 (revenue) ───
+        fg = (site.get('fail_gate', {}) or {})
+        if fg.get('snippet_blocked'):
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Snippet-Blocked: AIO Visibility = 0',
+                'finding': f"Snippet-blocked on {len(fg.get('blocked_pages', []))} page(s): {', '.join(fg.get('blocked_pages', [])[:3])}. Google applies nosnippet/max-snippet:0/data-nosnippet to AI Overviews/Mode too.",
+                'action': 'Remove the blockers from answer content NOW, add scripts/snippet_gate.py to CI, and re-audit. Precedent: Meltwater May-2026 relaunch +73% citations (99k → 172k) in weeks.',
+                'estimated_impact': 'HIGH'
+            })
+        commerce = results.get('commerce', {}) or {}
+        sim = (commerce.get('feed_impact_simulator', {}) or {}).get('per_field', {}) or {}
+        if sim:
+            top = sorted(sim.items(), key=lambda kv: kv[1].get('est_carousel_lift_pts', 0), reverse=True)[:2]
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Feed Fix = Carousel Revenue',
+                'finding': f"Top feed lifts: {', '.join(f'{f} +{v.get('est_carousel_lift_pts', 0):.0%} carousel eligibility' for f, v in top)}. ~83% of ChatGPT carousels resolve to feed-backed listings.",
+                'action': 'Apply reports/commerce_fixes/merchant_feed_fix.csv, publish Product Offer JSON-LD, probe ACP via scripts/acp_probe.js --cron.',
+                'estimated_impact': 'HIGH'
+            })
+        traffic = results.get('traffic_join', {}) or {}
+        roi = traffic.get('roi_line', {}) or {}
+        if roi.get('ai_revenue_share') not in (None, 0, 'n/a'):
+            recommendations.append({
+                'priority': 'MEDIUM', 'category': 'Revenue Proof',
+                'finding': f"AI-referrer revenue share {roi.get('ai_revenue_share')} with conversion rate {roi.get('ai_conversion_rate')} — SoMV now ties to pipeline.",
+                'action': 'Import fresh GSC/GA4/Bing exports monthly (scripts/import_traffic.py) and refresh the Looker Studio CEO page.',
                 'estimated_impact': 'MEDIUM'
             })
 

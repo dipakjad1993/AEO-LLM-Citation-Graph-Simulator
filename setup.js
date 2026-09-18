@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,31 @@ async function askYesNo(question, defaultValue = true) {
   if (answer === 'y' || answer === 'yes') return true;
   if (answer === 'n' || answer === 'no') return false;
   return defaultValue;
+}
+
+// ── Python version + Lite/Full guard (enterprise reproducibility) ──────────
+function checkPython() {
+  const cands = process.env.AEO_PYTHON ? [process.env.AEO_PYTHON] : ['python', 'python3', 'py'];
+  for (const cmd of cands) {
+    try {
+      const out = execFileSync(cmd, ['--version'], { encoding: 'utf8', timeout: 8000 });
+      const m = out.match(/Python\s+(\d+)\.(\d+)\.(\d+)/i);
+      if (!m) continue;
+      const [major, minor] = [Number(m[1]), Number(m[2])];
+      const ok = major > 3 || (major === 3 && minor >= 11);
+      console.log(`${cyan('i')} Python: ${out.trim()} (${cmd}) ${ok ? green('OK (>=3.11)') : red('TOO OLD — requires >=3.11, see .python-version')}`);
+      if (!ok) process.exitCode = 1;
+      try {
+        execFileSync(cmd, ['-c', 'import torch, transformers'], { stdio: 'ignore', timeout: 8000 });
+        console.log(`${cyan('i')} ML profile: ${green('FULL')} (torch/transformers present — RoBERTa/MiniLM-trf enabled)`);
+      } catch {
+        console.log(`${cyan('i')} ML profile: ${yellow('LITE')} (requirements-lite.txt — MiniLM/keyword + VADER fallbacks; dashboard badges "Lite mode: transformer sentiment OFF")`);
+      }
+      return cmd;
+    } catch {}
+  }
+  console.log(yellow('  Warning: no python found on PATH — install Python >=3.11 before running the pipeline.'));
+  return null;
 }
 
 // ── Live key validation ───────────────────────────────────────────────────
@@ -151,6 +177,8 @@ async function main() {
   console.log(bold('=============================================='));
   console.log(yellow('Configures the tool for real, verified, production-grade LLM data.'));
   console.log(yellow('Every API key is validated live before it is saved.\n'));
+
+  checkPython();
 
   if (fs.existsSync(path.join(ROOT, '.env'))) {
     console.log(yellow('An .env file already exists.'));

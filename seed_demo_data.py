@@ -1,8 +1,12 @@
 """
-Seed a keyless demo dataset: writes data/output/run_demo/extracted_data/all_results.json
+Seed a keyless demo dataset: writes
+data/output/run_demo_synthetic_QUARANTINED/extracted_data/all_results.json
 with synthetic multi-model, multi-turn, citation-bearing responses, then runs the
 full 14-stage pipeline. `npm run demo` / `python seed_demo_data.py --run`.
 No API keys. No fabrication in real paths — this file is clearly labelled demo.
+QUARANTINED: the run dir name itself carries _QUARANTINED, rows carry
+demo_synthetic/is_synthetic flags, the dashboard renders a red SYNTHETIC banner,
+and prod analysis fails loud on synthetic rows unless AEO_ALLOW_SYNTHETIC=1.
 """
 import json
 import random
@@ -37,7 +41,7 @@ def make_text(leader: str, turn: str) -> str:
 
 
 def main():
-    run_dir = ROOT / 'data' / 'output' / 'run_demo'
+    run_dir = ROOT / 'data' / 'output' / 'run_demo_synthetic_QUARANTINED'
     exdir = run_dir / 'extracted_data'
     exdir.mkdir(parents=True, exist_ok=True)
     rows = []

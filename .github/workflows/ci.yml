@@ -33,6 +33,6 @@ jobs:
       - name: Run full demo pipeline (streams stage progress; traceback surfaced)
         # Seed rows are labelled demo_synthetic and quarantined by default —
         # the demo opts in explicitly via AEO_ALLOW_SYNTHETIC=1 (same as --run).
-        run: python -u src/python-engine/main.py --run-dir data/output/run_demo
+        run: python -u src/python-engine/main.py --run-dir data/output/run_demo_synthetic_QUARANTINED
         env:
           AEO_ALLOW_SYNTHETIC: "1"

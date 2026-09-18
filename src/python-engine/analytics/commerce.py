@@ -230,8 +230,75 @@ class CommerceAnalyzer:
         out["status"] = "checked"
         return out
 
+    def feed_impact_simulator(self, feed_verdicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """GTIN + price + availability + image_link missing-field impact simulator.
+
+        Estimates carousel-eligibility lift per fixed field from real missing-shares
+        (no fabrication): items missing price/availability are filtered out of Shopping
+        carousels; missing GTIN/image_link demotes ranking. Lift = missing_share of
+        eligible items recoverable by fixing that field (assumes independent fix).
+        """
+        sim: Dict[str, Any] = {'per_field': {}, 'priority_order': [], 'evidence': 'missing-shares from feed_health validation'}
+        totals: Counter = Counter()
+        miss: Counter = Counter()
+        items = 0
+        for v in feed_verdicts or []:
+            items += v.get('items', 0)
+            for f, c in (v.get('missing_fields') or {}).items():
+                miss[f] += c
+        weights = {'price': 1.0, 'availability': 1.0, 'image_link': 0.6, 'gtin': 0.4, 'id': 0.8, 'title': 0.5, 'link': 0.7}
+        for f in self.REQUIRED_FEED_FIELDS:
+            share = (miss.get(f, 0) / items) if items else 0
+            sim['per_field'][f] = {
+                'missing_share': round(share, 4),
+                'est_carousel_lift_pts': round(share * weights.get(f, 0.5), 4),
+                'action': f'Backfill {f} for {miss.get(f, 0)} item(s) — see reports/commerce_fixes/merchant_feed_fix.csv.',
+            }
+        sim['priority_order'] = sorted(sim['per_field'], key=lambda f: sim['per_field'][f]['est_carousel_lift_pts'], reverse=True)
+        return sim
+
+    def shopify_ucp_badge(self, ucp: Dict[str, Any]) -> Dict[str, Any]:
+        valid = bool((ucp or {}).get('native_commerce'))
+        return {
+            'badge': 'native_commerce ✅' if valid else 'native_commerce ❌',
+            'detail': 'Shopify-style UCP search_catalog valid — eligible for native-commerce lookup.' if valid else 'No valid UCP search_catalog — publish /api/ucp/mcp search_catalog (ucp.dev) to earn the native_commerce badge.',
+        }
+
+    def write_fix_assets(self, feed_verdicts: List[Dict[str, Any]], output_dir=None) -> Dict[str, Any]:
+        """Publishable remediation assets (revenue, not reports): Product Offer JSON-LD
+        draft + Merchant feed CSV fix file listing rows with missing fields."""
+        from pathlib import Path as _P
+        base = _P(output_dir) / 'reports' / 'commerce_fixes' if output_dir else _P('data/output/commerce_fixes')
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return {'status': 'mkdir_failed'}
+        brand = self.brand_name or 'Your Brand'
+        offer = {
+            '@context': 'https://schema.org', '@type': 'Product', 'name': brand,
+            'offers': {'@type': 'Offer', 'priceCurrency': 'USD', 'price': 'REPLACE_WITH_PRICE', 'availability': 'https://schema.org/InStock', 'itemCondition': 'https://schema.org/NewCondition'},
+            '_note': 'Draft — replace placeholders, validate at validator.schema.org, ship with updated dateModified.',
+        }
+        try:
+            (base / 'product_offer.jsonld').write_text(json.dumps(offer, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+        fix_rows = []
+        for v in feed_verdicts or []:
+            for issue in v.get('issues', []) or []:
+                fix_rows.append({'feed': v.get('feed'), 'field': issue.get('field'), 'missing_share': issue.get('missing_share'), 'fix': f"Backfill {issue.get('field')} in Merchant Center feed"})
+        try:
+            import csv as _csv
+            with open(base / 'merchant_feed_fix.csv', 'w', newline='', encoding='utf-8') as f:
+                w = _csv.DictWriter(f, fieldnames=['feed', 'field', 'missing_share', 'fix'])
+                w.writeheader()
+                w.writerows(fix_rows)
+        except Exception:
+            pass
+        return {'status': 'written', 'dir': str(base), 'files': ['product_offer.jsonld', 'merchant_feed_fix.csv']}
+
     def analyze(self, df: pl.DataFrame) -> Dict[str, Any]:
-        result: Dict[str, Any] = {"status": "ok"}
+        result: Dict[str, Any] = {"status": "ok", "stage": "stage_0_preflight_and_12_full"}
         try:
             result["product_cards"] = self.product_card_presence(df)
         except Exception as e:
@@ -244,6 +311,12 @@ class CommerceAnalyzer:
             result.update(self.protocol_checks())
         except Exception as e:
             result["protocol_error"] = str(e)
+        try:
+            verdicts = (result.get('feed_health', {}) or {}).get('feeds', []) or []
+            result['feed_impact_simulator'] = self.feed_impact_simulator(verdicts)
+            result['shopify_badge'] = self.shopify_ucp_badge(result.get('ucp', {}))
+        except Exception as e:
+            result['simulator_error'] = str(e)
         return result
 
     def save(self, results: Dict, output_dir) -> None:
@@ -251,4 +324,9 @@ class CommerceAnalyzer:
         reports.mkdir(exist_ok=True)
         with open(reports / "commerce.json", "w") as f:
             json.dump(results, f, indent=2, default=str)
+        try:
+            verdicts = (results.get('feed_health', {}) or {}).get('feeds', []) or []
+            self.write_fix_assets(verdicts, output_dir)
+        except Exception as e:
+            logger.warning(f'Commerce fix assets failed: {e}')
         logger.info("Saved commerce analysis to %s", reports)

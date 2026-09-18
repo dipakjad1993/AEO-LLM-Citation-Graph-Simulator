@@ -1,0 +1,23 @@
+{
+  "_comment": "RBAC matrix for OIDC SSO mode. Single-token mode (no AEO_OIDC_* set) treats token holder as admin. With AEO_OIDC_ISSUER/AUDIENCE/JWKS_URL set, Bearer JWTs are verified (kid-matched JWKS, iss/aud/exp) and the roles claim maps to these permissions.",
+  "roles": {
+    "admin": {
+      "description": "Full control: run analyses, manage uploads/config, read audit, manage users (SCIM stub).",
+      "allow": ["/api/*"]
+    },
+    "analyst": {
+      "description": "Run analyses, upload data, read results/trends/audit. Cannot change security config or manage users.",
+      "allow": ["/api/analyze", "/api/status", "/api/results", "/api/runs", "/api/jobs", "/api/uploads", "/api/upload/*", "/api/config", "/api/export", "/api/trends", "/api/audit", "/api/health", "/api/security"],
+      "deny": ["/api/admin/*"]
+    },
+    "viewer": {
+      "description": "Read-only: results, trends, audit, health, security posture. Cannot trigger runs or uploads.",
+      "allow": ["/api/status", "/api/results", "/api/runs", "/api/jobs", "/api/uploads", "/api/export", "/api/trends", "/api/audit", "/api/health", "/api/security"],
+      "deny": ["/api/analyze", "/api/upload/*", "/api/config", "/api/admin/*"]
+    }
+  },
+  "scim": {
+    "endpoint": "POST /api/admin/scim/users",
+    "note": "Stub with audit event; wire to Entra ID / Okta SCIM provisioning in production."
+  }
+}

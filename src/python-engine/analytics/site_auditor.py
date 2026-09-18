@@ -110,6 +110,18 @@ class SiteAuditor:
             result['findings'].extend(p.get('findings', []))
             result['fixes'].extend(p.get('fixes', []))
         result['status'] = 'audited'
+        # P0 FAIL GATE (Google May-15 Guide): snippet blocks kill ALL AIO visibility.
+        blocked_pages = [p['url'] for p in ok if p.get('checks', {}).get('snippet_eligibility', {}).get('score', 100) == 0]
+        result['fail_gate'] = {
+            'snippet_blocked': bool(blocked_pages),
+            'blocked_pages': blocked_pages,
+            'ci_exit_code': 2 if blocked_pages else 0,
+            'case_study': 'Meltwater May-2026 relaunch fixing snippet blocks drove 99k -> 172k citations (+73% in weeks).',
+            'action': 'Remove nosnippet/max-snippet:0/data-nosnippet from answer blocks, then re-run snippet_gate.py in CI.' if blocked_pages else 'Snippet-eligible. Keep gate in CI.',
+        }
+        if blocked_pages:
+            result['findings'].append(f"FAIL GATE: {len(blocked_pages)} page(s) snippet-blocked — AIO visibility is 0 until fixed.")
+            self._fire_slack(f"⛔ AEO snippet FAIL GATE: {', '.join(blocked_pages[:5])} blocked (nosnippet/max-snippet:0/data-nosnippet). AIO visibility = 0. Meltwater +73% precedent — fix now.")
         return result
 
     def audit_page(self, url: str, prefetched: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -229,3 +241,17 @@ class SiteAuditor:
         with open(reports / 'site_audit.json', 'w') as f:
             json.dump(results, f, indent=2, default=str)
         logger.info('Saved site audit to %s', reports)
+
+    @staticmethod
+    def _fire_slack(text: str) -> None:
+        import os
+        hook = os.environ.get('SLACK_WEBHOOK_URL', '')
+        if not hook:
+            return
+        try:
+            import urllib.request as _u
+            req = _u.Request(hook, data=json.dumps({'text': text}).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            _u.urlopen(req, timeout=10)
+            logger.info('Snippet fail-gate Slack alert fired.')
+        except Exception as e:
+            logger.warning(f'Slack webhook failed: {e}')

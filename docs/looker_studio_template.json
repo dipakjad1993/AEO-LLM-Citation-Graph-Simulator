@@ -1,0 +1,13 @@
+{
+  "_comment": "Looker Studio template spec for AEO traffic join. Import: Looker Studio > Create > Data source (upload aeo_somv.csv from /api/export?format=csv) + GA4/GSC connectors, then add these charts.",
+  "data_sources": [
+    {"name": "AEO SoMV CSV", "from": "/api/export?format=csv", "fields": ["brand", "model", "mention_rate", "primary_recommendation_rate", "omission_rate", "n"]},
+    {"name": "GA4 AI referrers", "from": "scripts/import_traffic.py --ga4", "fields": ["source", "sessions", "conversions", "revenue"]},
+    {"name": "GSC generative gate", "from": "scripts/import_traffic.py --gsc", "fields": ["query", "clicks", "impressions", "ai_overview_present"]}
+  ],
+  "pages": [
+    {"title": "CEO — Revenue", "charts": ["AI revenue share (pie)", "LLM referrals convert 2x organic (scorecard: ai_conversion_rate vs organic)", "Generative-inclusion rate (timeseries)"]},
+    {"title": "SoMV by engine", "charts": ["mention_rate by model (bar, Wilson CI in tooltip via n)", "omission_rate by brand (bar)", "grounded vs memory split (stacked bar)"]},
+    {"title": "Volatility & CPR", "charts": ["90-day SoMV trend (from trends.db)", "CPR trend + 0.5 gate line", "unstable_share + HIGH flag"]}
+  ]
+}

@@ -336,8 +336,17 @@ function renderSection1(s) {
     h += deepAnalysis(`<strong>\ Health Snapshot:</strong> Share of Voice: <strong style="color:${sovPct>30?'var(--green)':sovPct>15?'var(--yellow)':'var(--red)'}">${sovPct}%</strong> | Mention Rate: <strong>${mentionPct}%</strong> | Primary Recommendation: <strong style="color:${primPct>20?'var(--green)':'var(--red)'}">${primPct}%</strong> | Omission Rate: <strong style="color:${omitPct<20?'var(--green)':'var(--red)'}">${omitPct}%</strong> | Positive:Negative Triples: <strong style="color:${posNegRatio>2?'var(--green)':'var(--red)'}">${posNegRatio}:1</strong> (${posTriples} pos / ${negTriples} neg)`);
   }
 
-  // Data source indicator
+  // Data source indicator (+ QUARANTINE banner: synthetic rows must never pass as prod)
   const dataSource = s.data_source || {};
+  const synthN = (s.data_quality && s.data_quality.synthetic_quarantined) || s.synthetic_quarantined || 0;
+  const runIsQuarantined = /QUARANTINED/i.test(dataSource.runId || '') || /QUARANTINED/i.test(s?.pipeline_meta?.run_dir || '') || synthN > 0 || !!s?.pipeline_meta?.synthetic_allowed;
+  if (runIsQuarantined) {
+    h += `<div class="synthetic-banner" style="background:#d93025;color:#fff;padding:12px 16px;border-radius:10px;margin:12px 0;font-weight:700">⛔ SYNTHETIC — NOT PROD EVIDENCE: run_demo_synthetic_QUARANTINED${synthN ? ` (${synthN} demo_synthetic rows)` : ''}. Wilson CIs here describe the demo corpus only. Do not join with prod CSVs.</div>`;
+  }
+  // Lite-vs-Full ML badge (never let VADER pass as RoBERTa)
+  if (s?.pipeline_meta?.lite_mode || (s?.sentiment_matrix && s.sentiment_matrix.engine && /vader|keyword|fallback/i.test(s.sentiment_matrix.engine))) {
+    h += `<div class="lite-badge" style="background:#fef7e0;border:1px solid #f9ab00;color:#7a4a00;padding:8px 14px;border-radius:20px;margin:8px 0;font-size:.82em;font-weight:600;display:inline-block">Lite mode: transformer sentiment OFF (VADER/keyword fallback) — install requirements.txt for RoBERTa + MiniLM-trf</div>`;
+  }
   if(dataSource.dataSource === 'orchestrator_run') {
     h += deepAnalysis(`<strong>Data Source:</strong> Analysis based on <strong>real LLM API responses</strong> from the most recent orchestrator run. Every metric is computed from actual model outputs.`);
   } else if(dataSource.hasUploads) {

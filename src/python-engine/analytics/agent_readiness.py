@@ -98,6 +98,7 @@ class AgentReadiness:
         mcp_score = 100 if mcp_hits else 0
         checks['mcp_webmcp'] = {'score': mcp_score, 'endpoints_found': mcp_hits, 'json_validated': mcp_validated,
             'validation_note': 'Substring probe is a smoke signal only; json_validated lists endpoints returning a parseable tool manifest.',
+            'e2e': 'Run python scripts/mcp_tool_test.py <site> [--tool search_catalog] to actually CALL the tool (JSON-RPC tools/call), not just parse JSON.',
             'notes': [f'MCP/UCP endpoint(s): {mcp_hits}'] if mcp_hits else ['No MCP/WebMCP Tool Contract or UCP search_catalog found.']}
 
         # 3. ACP (ChatGPT Shopping / agentic checkout)
