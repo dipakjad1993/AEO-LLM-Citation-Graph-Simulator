@@ -1317,10 +1317,15 @@ class AEOAnalyticsEngine:
         sim = (commerce.get('feed_impact_simulator', {}) or {}).get('per_field', {}) or {}
         if sim:
             top = sorted(sim.items(), key=lambda kv: kv[1].get('est_carousel_lift_pts', 0), reverse=True)[:2]
+            # 3.11-safe: no nested same-quote f-strings (PEP 701 is 3.12+; CI runs 3.11).
+            top_bits = ', '.join(
+                '%s +%s carousel eligibility' % (fname, '{:.0%}'.format(vals.get('est_carousel_lift_pts', 0)))
+                for fname, vals in top
+            )
             recommendations.append({
                 'priority': 'HIGH',
                 'category': 'Feed Fix = Carousel Revenue',
-                'finding': f"Top feed lifts: {', '.join(f'{f} +{v.get('est_carousel_lift_pts', 0):.0%} carousel eligibility' for f, v in top)}. ~83% of ChatGPT carousels resolve to feed-backed listings.",
+                'finding': 'Top feed lifts: ' + top_bits + '. ~83% of ChatGPT carousels resolve to feed-backed listings.',
                 'action': 'Apply reports/commerce_fixes/merchant_feed_fix.csv, publish Product Offer JSON-LD, probe ACP via scripts/acp_probe.js --cron.',
                 'estimated_impact': 'HIGH'
             })
