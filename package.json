@@ -1,6 +1,6 @@
 {
   "name": "aeo-llm-citation-graph-simulator",
-  "version": "2.0.0",
+  "version": "2.3.1",
   "description": "AEO & LLM Citation Graph Simulator - open, auditable technical-SEO truth for AI search (2026)",
   "main": "src/node-orchestrator/index.js",
   "type": "module",

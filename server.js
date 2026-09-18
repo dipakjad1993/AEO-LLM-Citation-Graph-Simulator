@@ -201,10 +201,10 @@ function callerRole(req) {
     if (list.includes('analyst')) return 'analyst';
     return 'viewer';
   }
-  const r = (req.headers['x-aeo-role'] || req.headers['x-role'] || '').toLowerCase();
   if (SSO_ENFORCED) return 'viewer'; // never trust headers when OIDC is enforced
+  const r = (req.headers['x-aeo-role'] || req.headers['x-role'] || '').toLowerCase();
   if (['admin', 'analyst', 'viewer'].includes(r)) return r;
-  return AUTH_TOKEN ? 'admin' : 'viewer'; // single-token mode: token holder is admin
+  return 'admin'; // single-token mode: authed() already gated (token holder or open dev) — treat as admin so Save+Analyze works
 }
 function requireRole(req, res, ...allowed) {
   const role = callerRole(req);

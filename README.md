@@ -65,7 +65,7 @@ Methodology detail: [`docs/methodology.md`](docs/methodology.md) (read before ch
 | B. Real tracking | `node setup.js` then `npm run full-run` | Validates each key live; enforces Python ≥3.11; needs 1+ provider key |
 | B2. Scale + sharding | `node src/node-orchestrator/index.js --scale pilot\|standard\|enterprise --prompts 50 --shard 1/4` | Enterprise = 5,000 sessions sharded; pre-flight budget gate refuses over-budget runs (`docs/enterprise.md` §12) |
 | B3. Auto-onboard | `python scripts/auto_onboard.py --domain https://YOUR-SITE/` or UI ⚡ button / `GET /api/onboard?domain=` | Sitemap crawl → 20 money prompts + heuristic competitors + snippet/schema/robots preflight |
-| C. Server UI/API | `AEO_AUTH_TOKEN=... node server.js` | `http://localhost:3000`, probe `/api/health` |
+| C. Server UI/API | `node server.js` (dev, open) or `AEO_AUTH_TOKEN=... node server.js` (private) | `http://localhost:3000`, probe `/api/health`; auth mode + role at `/api/security` |
 | D. Docker | `docker compose up --build` | Sets `HOST=0.0.0.0`; demo seeder excluded from image |
 | E. Static UI + hosted backend | Cloudflare Pages + Render/Docker | Set `AEO_CORS_ORIGIN=https://YOUR-PAGES-URL` on backend; open Pages URL once as `?api=https://YOUR-BACKEND` (`&token=...` if auth set) |
 
@@ -132,7 +132,20 @@ Pipeline: **Stage 0 Commerce preflight** → 14 stages (attribution, triples, ve
 - CORS allow-list (`AEO_CORS_ORIGIN`, comma-separated; `*` is dev-only with boot warning)
 - Proxy secrets **never in browser/config**: `PROXY_URL` / `AEO_PROXY_<MARKET>` env only; `/api/config` strips posted secrets and logs the count
 - Correlation IDs (`x-request-id` echoed, file+OTLP JSONL via `OTEL_ENABLED=1`), persistent jobs, audit chain, retention policy (`docs/retention.md`)
-- SSO/RBAC: real JWKS verify (kid-matched, iss/aud/exp) via `AEO_OIDC_ISSUER/AUDIENCE/JWKS_URL` + matrix (`config/security.json`: `admin|analyst|viewer`) on ALL mutating routes; see [`docs/enterprise.md`](docs/enterprise.md)
+- Auth modes: **single-token** (no `AEO_OIDC_*` set — dev/SMB, token holder is `admin`, open dev without a token is also `admin`) vs **OIDC SSO** (`AEO_OIDC_ISSUER/AUDIENCE/JWKS_URL` set — real JWKS verify, kid-matched, iss/aud/exp, `roles` claim → matrix in `config/security.json`: `admin|analyst|viewer`) on ALL mutating routes; see [`docs/enterprise.md`](docs/enterprise.md)
+
+### Troubleshooting: `Forbidden: role 'viewer' is read-only`
+
+`Save & Start Full Analysis` does `POST /api/config` → `POST /api/analyze`. Both are mutating, so `viewer` is correctly blocked.
+
+| Your setup | Fix |
+|---|---|
+| Local dev, no OIDC vars set, still 403 | Pull latest (fixed in `server.js` `callerRole()` — single-token dev defaults to `admin`) and restart `node server.js` |
+| `AEO_OIDC_*` are set (SSO enforced) | Give your user `analyst` or `admin` in the IdP `roles`/`groups` claim; pure `viewer` stays read-only by design |
+| `AEO_AUTH_TOKEN` is set, UI calls fail | Open the UI once as `?api=http://localhost:3000&token=YOUR_TOKEN` (token lives in `sessionStorage` only) |
+| Static hosting (Pages) with no backend | Expected — set `?api=https://YOUR-BACKEND`; without it the UI shows the `Static preview` banner |
+
+Verify your mode: `GET /api/security` returns `{ auth: { sso_enforced, caller_role }, ... }`.
 
 ## Docs (deep dives)
 
