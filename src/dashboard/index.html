@@ -287,7 +287,7 @@ textarea{min-height:64px;resize:vertical}
 
 <div id="backend-offline" class="card" style="display:none;border-left:4px solid #e37400;margin:20px 24px 0">
   <h2>Static preview &mdash; backend not connected</h2>
-  <p class="sub">This copy is served without the Node API backend (for example Cloudflare Pages static hosting), so runs, uploads and results are unavailable here. For the full tool run <b>node server.js</b> locally, deploy with Docker, or use the hosted demo. See the README Quickstart.</p>
+  <p class="sub">This copy is served without a same-origin API backend (for example Cloudflare Pages static hosting), so runs, uploads and results are unavailable until you connect one. Full tool locally: run <b>node server.js</b> or deploy with Docker. Static copy + live backend: open this page once as <b>?api=https://YOUR-BACKEND</b> (add <b>&amp;token=...</b> if the backend requires <b>AEO_AUTH_TOKEN</b>) — the choice is remembered in this browser.</p>
 </div>
 
 <div class="main">
@@ -731,7 +731,26 @@ function toggleSection(header){
     },{once:true});
   }
 }
-async function api(ep,o={}){const r=await fetch(ep,{headers:{'Content-Type':'application/json'},...o});const ct=r.headers.get('content-type')||'';if(!ct.includes('json'))throw new Error('API backend unreachable at '+ep+' (HTTP '+r.status+')');return r.json()}
+// Split deployment: UI on static hosting (Pages), backend anywhere.
+// ?api=https://backend-host is remembered in localStorage; ?token=... (for
+// backends with AEO_AUTH_TOKEN) is kept in sessionStorage only, never localStorage.
+function apiBase(){
+  try{
+    const q=new URLSearchParams(location.search);
+    const a=q.get('api');
+    if(a)localStorage.setItem('aeo_api_base',a.replace(/\/+$/,''));
+    return (localStorage.getItem('aeo_api_base')||'').replace(/\/+$/,'');
+  }catch(e){return ''}
+}
+function apiToken(){
+  try{
+    const q=new URLSearchParams(location.search);
+    const t=q.get('token');
+    if(t)sessionStorage.setItem('aeo_token',t);
+    return sessionStorage.getItem('aeo_token')||'';
+  }catch(e){return ''}
+}
+async function api(ep,o={}){const h={'Content-Type':'application/json'};const t=apiToken();if(t)h['Authorization']='Bearer '+t;const r=await fetch(apiBase()+ep,{headers:h,...o});const ct=r.headers.get('content-type')||'';if(!ct.includes('json'))throw new Error('API backend unreachable at '+apiBase()+ep+' (HTTP '+r.status+')');return r.json()}
 
 // Static hosts (e.g. Cloudflare Pages) serve this UI with no /api/* backend:
 // surface one clear banner instead of silent dead buttons + console errors.
@@ -888,7 +907,8 @@ async function saveConfig(runNow){
 async function doUpload(section,file){
   const fd=new FormData();fd.append('file',file);
   try{
-    const r=await fetch('/api/upload/'+section,{method:'POST',body:fd});
+    const hb={};const tok=apiToken();if(tok)hb['Authorization']='Bearer '+tok;
+    const r=await fetch(apiBase()+'/api/upload/'+section,{method:'POST',headers:hb,body:fd});
     const d=await r.json();
     if(d.success){toast(file.name+' uploaded','ok');loadFiles()}else toast('Upload failed','er');
   }catch(e){toast('Backend not connected — uploads need node server.js','er');showOffline()}
@@ -908,7 +928,7 @@ async function loadFiles(){
     el.innerHTML=(files||[]).map(f=>`<div class="fitem"><span class="nm">${f.name}</span><span class="sz">${(f.size/1024).toFixed(1)}KB</span><span class="del" onclick="delFile('${s}','${f.name}')">&times;</span></div>`).join('');
   }
 }
-async function delFile(s,n){try{await fetch('/api/upload/'+s+'/'+n,{method:'DELETE'});loadFiles()}catch(e){toast('Backend not connected','er');showOffline()}}
+async function delFile(s,n){try{const hb={};const tok=apiToken();if(tok)hb['Authorization']='Bearer '+tok;await fetch(apiBase()+'/api/upload/'+s+'/'+n,{method:'DELETE',headers:hb});loadFiles()}catch(e){toast('Backend not connected','er');showOffline()}}
 
 // ── Analysis ──
 let pollId=null;

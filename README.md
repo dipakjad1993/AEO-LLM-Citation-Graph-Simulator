@@ -58,11 +58,18 @@ Methodology detail: [`docs/methodology.md`](docs/methodology.md) (read before ch
 | B. Real tracking | `node setup.js` then `npm run full-run` | Validates each key live; enforces Python >=3.11; needs 1+ provider key |
 | C. Server UI/API | `AEO_AUTH_TOKEN=... node server.js` | `http://localhost:3000`, probe `/api/health` |
 | D. Docker | `docker compose up --build` | Sets `HOST=0.0.0.0` for you |
-| E. Static preview (Cloudflare Pages) | Framework preset None, empty build command, output dir = repo root | Landing + inputs shell only (no `/api/*` backend); shows a "Static preview" banner. Full runs need C/D |
+| E. Full tool with UI on Cloudflare Pages | Pages (static UI) + hosted backend (Render/Docker) | See split-deployment note below |
 
-> Pages note: this repo is a Node + Python app, not a static site — Pages can only host the
-> dashboard shell (`_redirects` maps `/` to `src/dashboard/index.html`). Live analysis, uploads,
-> and results need the `server.js` backend (paths C/D) or the hosted demo above.
+> Pages note: this repo is a Node + Python app, not a static site — Pages hosts the
+> dashboard shell (`_redirects` maps `/` to `src/dashboard/index.html`).
+>
+> **Split deployment (full functions at your Pages URL):**
+> 1. Host the backend (Render/Docker/VPS) with your provider keys, and set
+>    `AEO_CORS_ORIGIN=https://aeo-llm-citation-graph-simulator.pages.dev` on it (comma-separated allow-list; redeploy).
+> 2. Open the Pages URL once as `?api=https://YOUR-BACKEND-HOST` (add `&token=...`
+>    if the backend sets `AEO_AUTH_TOKEN`) — remembered per browser; token stays in session storage only.
+> 3. The "Static preview" banner disappears once the UI reaches the backend; every
+>    function (inputs, uploads, runs, results, exports) then works from the Pages URL.
 
 Provider keys: OpenAI, Anthropic, Google, Perplexity, DeepSeek, xAI (`XAI_API_KEY`), SERP (`SERP_API_KEY` + `SERP_PROVIDER=serper|dataforseo|zenserp`).
 

@@ -15,6 +15,15 @@
   emit OTLP-compatible JSONL spans to `logs/otel.jsonl` (no vendor SDK required).
 - **Auth**: `AEO_AUTH_TOKEN` required when `NODE_ENV=production` (server refuses to boot
   without it). All `/api/*` except `/api/health` require it.
+- **Split deployment (static UI + remote backend)**: the dashboard supports
+  `?api=https://backend-host` (persisted to `localStorage`) and `?token=...`
+  (session storage only) so Cloudflare Pages can serve the UI while every call —
+  inputs, uploads, analyze, status, results, runs, export — executes on the hosted
+  `server.js` backend. The backend needs zero code changes: preflight `OPTIONS`
+  answers 204 before auth, `Access-Control-Allow-Headers` already covers
+  `Authorization`, and the request origin is reflected when listed in
+  `AEO_CORS_ORIGIN`. Without a reachable backend the UI shows a "Static preview"
+  banner instead of failing silently.
 - **SSO / RBAC (enterprise)**: set `AEO_OIDC_ISSUER`, `AEO_OIDC_AUDIENCE`,
   `AEO_OIDC_JWKS_URL` to enforce OIDC JWTs (verified via JWKS, `kid`-matched) with
   `roles` claim → `admin | analyst | viewer` RBAC matrix (`config/security.json`).
