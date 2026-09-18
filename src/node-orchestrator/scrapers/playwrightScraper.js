@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import winston from 'winston';
+import { MARKET_LOCALE, normalizeMarket } from '../utils/marketGeo.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -22,7 +23,7 @@ export class PlaywrightScraper {
     this.stealthMode = config.execution.playwright?.stealth_mode || true;
   }
 
-  async initialize() {
+  async initialize(proxyOverride = null) {
     const launchOptions = {
       headless: this.config.execution.playwright?.headless ?? true,
       args: this.config.execution.playwright?.browser_args || [
@@ -31,30 +32,50 @@ export class PlaywrightScraper {
       ]
     };
 
-    if (this.config.execution.playwright?.proxy?.enabled) {
-      launchOptions.proxy = {
+    // Per-market residential proxy rotation: explicit override (from the market
+    // group being executed) wins; static config is the fallback. Proxy is a
+    // launch-level setting in Playwright — rotation happens via relaunch.
+    const proxy = proxyOverride || (this.config.execution.playwright?.proxy?.enabled
+      ? {
         server: this.config.execution.playwright.proxy.server,
         username: this.config.execution.playwright.proxy.username,
         password: this.config.execution.playwright.proxy.password
-      };
-    }
+      }
+      : null);
+    if (proxy?.server) launchOptions.proxy = proxy;
+    this.activeProxy = proxy?.server || 'direct';
 
     this.browser = await chromium.launch(launchOptions);
-    logger.info('Playwright browser launched');
+    logger.info('Playwright browser launched', { proxy: this.activeProxy });
     return this;
   }
 
-  async getOrCreateContext(targetName) {
-    if (this.contexts[targetName]) return this.contexts[targetName];
+  /** Close and relaunch with a different egress proxy (market rotation). No-op if unchanged. */
+  async relaunchWithProxy(proxy) {
+    const next = proxy?.server || 'direct';
+    if (next === this.activeProxy && this.browser) return false;
+    try { await this.browser?.close(); } catch {}
+    this.contexts = {};
+    await this.initialize(proxy);
+    return true;
+  }
+
+  async getOrCreateContext(targetName, market = null) {
+    const mkt = market ? normalizeMarket(market) : null;
+    const key = mkt ? `${targetName}::${mkt}` : targetName;
+    if (this.contexts[key]) return this.contexts[key];
 
     const target = this.config.models.playwright_targets?.[targetName];
     if (!target) throw new Error(`Unknown Playwright target: ${targetName}`);
 
+    // Hyper-specific locale/timezone per market: a London buyer sees different
+    // retrieval results than an Austin buyer. Falls back to en-US/New_York.
+    const loc = (mkt && MARKET_LOCALE[mkt]) || MARKET_LOCALE.US;
     const contextOptions = {
       viewport: this.config.execution.playwright?.viewport || { width: 1920, height: 1080 },
       userAgent: this.config.execution.playwright?.user_agent,
-      locale: 'en-US',
-      timezoneId: 'America/New_York'
+      locale: loc.locale,
+      timezoneId: loc.timezone
     };
 
     const context = await this.browser.newContext(contextOptions);
@@ -69,14 +90,18 @@ export class PlaywrightScraper {
       }
     }
 
-    this.contexts[targetName] = context;
+    this.contexts[key] = context;
     return context;
   }
 
-  async queryWithRetry(modelId, messages, targetName, maxRetries = 3) {
+  async queryWithRetry(modelId, messages, targetName, opts = {}) {
+    // Back-compat: 4th arg may be a legacy maxRetries number.
+    const options = typeof opts === 'number' ? { maxRetries: opts } : opts;
+    const maxRetries = options.maxRetries || 3;
+    const market = options.market || null;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        return await this.executeQuery(modelId, messages, targetName);
+        return await this.executeQuery(modelId, messages, targetName, market);
       } catch (error) {
         logger.warn(`Playwright query attempt ${attempt}/${maxRetries} failed`, { error: error.message });
         if (attempt === maxRetries) throw error;
@@ -85,8 +110,8 @@ export class PlaywrightScraper {
     }
   }
 
-  async executeQuery(modelId, messages, targetName) {
-    const context = await this.getOrCreateContext(targetName);
+  async executeQuery(modelId, messages, targetName, market = null) {
+    const context = await this.getOrCreateContext(targetName, market);
     const page = await context.newPage();
 
     try {

@@ -228,6 +228,14 @@ class AEOAnalyticsEngine:
             if citation_count is None and isinstance(item.get('num_citations'), (int, float)):
                 citation_count = item['num_citations']
 
+            # RAG invalidation vectors: provider-reported hidden queries (engine truth
+            # about what was retrieved) ride along as homogeneous list columns.
+            _hidden = item.get('hidden_search_queries', []) or []
+            _hidden = [str(q) for q in _hidden if isinstance(q, (str, int, float))]
+            _fanout = item.get('fanout_queries', []) or []
+            _prov_q = [str(f.get('query')) for f in _fanout
+                       if isinstance(f, dict) and f.get('origin') == 'provider_reported' and f.get('query')]
+
             record = {
                 'execution_id': item.get('executionId', item.get('execution_id', '')),
                 'prompt_session_id': item.get('promptSessionId', item.get('prompt_session_id', item.get('session_id', ''))),
@@ -244,6 +252,11 @@ class AEOAnalyticsEngine:
                 'channel': item.get('channel', ''),
                 'serp_surface': item.get('serp_surface', ''),
                 'volatility_rep': item.get('volatilityRep', item.get('volatility_rep', 0)),
+                'market': item.get('market', item.get('geo', 'US')),
+                'geo': item.get('geo', 'us'),
+                'snapshot': item.get('snapshot', 'current'),
+                'location_code': item.get('location_code'),
+                'rag_capture': item.get('rag_capture', 'on'),
                 'success': item.get('status', 'fulfilled') in ('fulfilled', 'success', 'COMPLETED', True),
                 'raw_text': raw_text,
                 'citations': citations,
@@ -252,6 +265,10 @@ class AEOAnalyticsEngine:
                 'triples': item.get('triples', []),
                 'usage': item.get('usage', {}),
                 'citation_count': citation_count if citation_count is not None else len(citations),
+                'hidden_search_queries': _hidden,
+                'hidden_query_count': len(_hidden),
+                'fanout_provider_queries': _prov_q,
+                'fanout_provider_count': len(_prov_q),
                 'primary_brand_mention': '',
                 'brand_mentioned': item.get('brand_mentioned', False),
                 'brand_rank': item.get('brand_rank'),
@@ -510,6 +527,18 @@ class AEOAnalyticsEngine:
                 'graph_stats': results.get('graph_stats', {}),
             })
             enterprise_results = enterprise.analyze(df, graphs, embedding_results, somv, results.get('graph_stats', {}))
+            # Agency savings on MEASURED spend only: cost_report.json from this run.
+            try:
+                _spend = 0.0
+                if run_dir:
+                    _cp = Path(run_dir) / 'extracted_data' / 'cost_report.json'
+                    if _cp.exists():
+                        _cr = json.loads(_cp.read_text(encoding='utf-8'))
+                        _spend = float(_cr.get('totalCost', _cr.get('total_cost', 0.0)) or 0.0)
+                enterprise_results['agency_savings'] = EnterpriseInsights.agency_savings(_spend)
+            except Exception as e:
+                logger.warning(f'Agency savings failed: {e}')
+                enterprise_results['agency_savings'] = {'status': 'error', 'message': str(e)}
             results['enterprise_insights'] = enterprise_results
             enterprise.save(enterprise_results, output_path)
             _emit(8, f'Enterprise insights done ({_time.time()-t0:.1f}s)')
@@ -1224,6 +1253,49 @@ class AEOAnalyticsEngine:
                 'estimated_impact': 'MEDIUM'
             })
 
+        # Retrieval diagnostics: reformulation failures, not stupid models
+        retr = ei.get('retrieval_diagnostics', {}) or {}
+        for f in (retr.get('findings', []) or []):
+            recommendations.append({
+                'priority': 'HIGH',
+                'category': 'Retrieval Reformulation Failure',
+                'finding': f,
+                'action': 'Log hidden queries per response (dynamic_search_context.capture_hidden_queries) and tune allowed_domains, search_context_size, and query_templates until dead-query rate drops.',
+                'estimated_impact': 'HIGH'
+            })
+        for dq in (retr.get('top_dead_queries', []) or [])[:3]:
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Dead Retrieval Query',
+                'finding': 'Engine query "%s" retrieved but never surfaced in citations (%d responses).' % (dq.get('query', ''), dq.get('count', 0)),
+                'action': 'Check which domains that query returns on Google/Bing directly; add the missing authority nodes to your outreach list.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # Temporal drift: model re-index vs your site
+        tdrift = ei.get('temporal_drift', {}) or {}
+        for f in (tdrift.get('findings', []) or []):
+            recommendations.append({
+                'priority': 'MEDIUM',
+                'category': 'Model Re-index Drift',
+                'finding': f,
+                'action': 'Keep paired snapshot runs on a cadence; only rewrite content when BOTH snapshots move together.',
+                'estimated_impact': 'MEDIUM'
+            })
+
+        # Agency savings on measured spend
+        save = ei.get('agency_savings', {}) or {}
+        if save.get('status') == 'measured':
+            recommendations.append({
+                'priority': 'INFO',
+                'category': 'Cost Savings (Measured)',
+                'finding': save.get('finding', ''),
+                'action': 'Annualized run-rate savings: $%s-$%s vs retainer. Reinvest a fraction into review-gen + analyst briefings.' % (
+                    '{:,.0f}'.format(save.get('annual_savings_range_usd', [0, 0])[0]),
+                    '{:,.0f}'.format(save.get('annual_savings_range_usd', [0, 0])[1])),
+                'estimated_impact': 'HIGH'
+            })
+
         # ─── MODULE 10: Grounded-only honesty ───
         grounded = (somv.get('grounded_only', {}) or {})
         if grounded.get('grounded_share', 1) < 0.74:
@@ -1316,7 +1388,7 @@ class AEOAnalyticsEngine:
         commerce = results.get('commerce', {}) or {}
         sim = (commerce.get('feed_impact_simulator', {}) or {}).get('per_field', {}) or {}
         if sim:
-            top = sorted(sim.items(), key=lambda kv: kv[1].get('est_carousel_lift_pts', 0), reverse=True)[:2]
+            top = sorted(sim.items(), key=lambda kv: (-kv[1].get('est_carousel_lift_pts', 0), kv[0]))[:2]
             # 3.11-safe: no nested same-quote f-strings (PEP 701 is 3.12+; CI runs 3.11).
             top_bits = ', '.join(
                 '%s +%s carousel eligibility' % (fname, '{:.0%}'.format(vals.get('est_carousel_lift_pts', 0)))

@@ -394,6 +394,101 @@ class DashboardGenerator:
         except Exception:
             return 'document.write(\'<script src="https://cdn.plot.ly/plotly-latest.min.js">\\x3C/script>\')'
 
+    def _cmo_executive_block(self, results: Dict) -> str:
+        """CMO mockup: funnel SoMV, missing grounding sources + actions, hallucination
+        alerts, remediation assets, source ROI. Every number comes from computed
+        modules — no invented dollars, no fabricated copy."""
+        ei = results.get('enterprise_insights', {}) or {}
+        ver = results.get('claim_verification', {}) or {}
+        ver_overall = ver.get('overall', {}) or {}
+
+        trend = ei.get('somv_trendlines', {}) or {}
+        fam_rows = ''
+        for fam, shares in (trend.get('by_model_family', {}) or {}).items():
+            top = sorted(shares.items(), key=lambda kv: kv[1], reverse=True)[:3]
+            fam_rows += '<tr><td><strong>' + str(fam) + '</strong></td><td>' + ', '.join(
+                '%s %.0f%%' % (b, s) for b, s in top) + '</td></tr>'
+        funnel_rows = ''
+        for stage, shares in (trend.get('by_funnel_stage', {}) or {}).items():
+            top = sorted(shares.items(), key=lambda kv: kv[1], reverse=True)[:3]
+            funnel_rows += '<tr><td><strong>' + str(stage) + '</strong></td><td>' + ', '.join(
+                '%s %.0f%%' % (b, s) for b, s in top) + '</td></tr>'
+
+        roi = ei.get('source_roi', {}) or {}
+        roi_rows = ''
+        for i, src in enumerate((roi.get('ranked_sources', []) or [])[:10]):
+            roi_rows += '<tr><td>%d. %s</td><td>%.0f</td><td>%.1f</td><td>%d models</td></tr>' % (
+                i + 1, src.get('domain', ''), src.get('citation_influence_weight', 0),
+                100 * src.get('citation_share', 0), src.get('model_diversity', 0))
+
+        sgr = ei.get('semantic_gap_remediation', {}) or {}
+        script_rows = ''
+        for s in (sgr.get('remediation_scripts', []) or [])[:6]:
+            script_rows += '<tr><td><strong>' + str(s.get('title', ''))[:90] + '</strong></td><td>' + str(
+                s.get('target_page', '')) + '</td><td>' + str(s.get('type', '')) + '</td></tr>'
+
+        inv = ei.get('inverse_citation', {}) or {}
+        blocks = [b for b in (inv.get('crawler_blockage', []) or [])
+                  if b.get('blocked') and b.get('severity') in ('CRITICAL', 'WARNING')]
+        block_html = ''.join(
+            '<div class="bias-item severity-high"><strong>' + str(b.get('crawler', '')) + ' (' + str(b.get('door', '')) + ')</strong>'
+            '<p class="remediation">' + str(b.get('detail', '')) + '</p></div>' for b in blocks[:5])
+
+        par = ei.get('parity_calibration', {}) or {}
+        par_flags = par.get('variance_flags', []) or []
+        par_html = '<p>Mean API/UI citation variance: <strong>%.1f%%</strong> (%s). %d paired prompt(s) over 15%% — investigate, do not average.</p>' % (
+            100 * (par.get('mean_citation_variance', 0) or 0), par.get('status', 'unknown'), len(par_flags))
+
+        retr = ei.get('retrieval_diagnostics', {}) or {}
+        retr_rows = ''
+        for fam, m in (retr.get('per_model', {}) or {}).items():
+            retr_rows += '<tr><td><strong>' + str(fam) + '</strong></td><td>%.0f%%</td><td>%.0f%%</td><td>%.0f%%</td></tr>' % (
+                100 * m.get('hidden_query_coverage', 0), 100 * m.get('reformulation_failure_rate', 0),
+                100 * m.get('memory_only_share', 0))
+
+        tdrift = ei.get('temporal_drift', {}) or {}
+        drift_rows = ''
+        for brand, d in (tdrift.get('brand_deltas', {}) or {}).items():
+            arrow = '+' if d.get('delta', 0) >= 0 else ''
+            drift_rows += '<tr><td><strong>' + str(brand) + '</strong></td><td>%.0f%%</td><td>%.0f%%</td><td>%s%.0f pts</td></tr>' % (
+                100 * d.get('baseline', 0), 100 * d.get('current', 0), arrow, 100 * d.get('delta', 0))
+
+        save = ei.get('agency_savings', {}) or {}
+        save_html = ''
+        if save.get('status') == 'measured':
+            lo, hi = save.get('annual_savings_range_usd', [0, 0])
+            save_html = '<p>Measured API spend <strong>$%.2f</strong> vs $15k-25k/mo agency retainer = <strong>$%s-$%s/yr</strong> savings (%s payback).</p>' % (
+                save.get('measured_spend_usd', 0), '{:,.0f}'.format(lo), '{:,.0f}'.format(hi), save.get('payback_multiple', 'n/a'))
+
+        return (
+            '<div class="section"><h2>Executive Brief — What To Write, Where To Publish, Revenue At Risk</h2>'
+            '<h3>Share of Model Voice by Model Family</h3><table><thead><tr><th>Family</th><th>Top brands (primary share)</th></tr></thead>'
+            '<tbody>' + (fam_rows or '<tr><td colspan="2">No family data.</td></tr>') + '</tbody></table>'
+            '<h3>SoMV by Buyer Funnel Stage</h3><table><thead><tr><th>Stage</th><th>Top brands (primary share)</th></tr></thead>'
+            '<tbody>' + (funnel_rows or '<tr><td colspan="2">No funnel data.</td></tr>') + '</tbody></table>'
+            '<h3>Top Grounding Sources Missing From Your Domain (by Citation Influence Weight)</h3>'
+            '<table><thead><tr><th>Source</th><th>Influence</th><th>Share</th><th>Diversity</th></tr></thead>'
+            '<tbody>' + (roi_rows or '<tr><td colspan="4">No source data.</td></tr>') + '</tbody></table>'
+            '<p>Action pattern: seed expert discussions where influence is high, update grid profiles, publish counter-docs — full briefs in remediation scripts.</p>'
+            '<h3>Hallucination &amp; Attribute Alerts</h3>'
+            '<p>Contradicted claims: <strong>' + str(ver_overall.get('contradicted', 0)) + '</strong> · '
+            'Unverified: <strong>' + str(ver_overall.get('unverified', 0)) + '</strong> — inject schema-validated FAQs on the flagged pages.</p>'
+            + block_html +
+            '<h3>Ready-to-Publish Remediation Assets</h3>'
+            '<table><thead><tr><th>Asset</th><th>Target</th><th>Type</th></tr></thead>'
+            '<tbody>' + (script_rows or '<tr><td colspan="3">No scripts generated.</td></tr>') + '</tbody></table>'
+            '<p>Full JSON-LD + Markdown drafts live in enterprise_insights.json — publish, do not just report.</p>'
+            '<h3>API vs Web-UI Parity</h3>' + par_html +
+            '<h3>Retrieval Diagnostics (RAG invalidation)</h3>'
+            '<table><thead><tr><th>Family</th><th>Query coverage</th><th>Reformulation failure</th><th>Memory-only</th></tr></thead>'
+            '<tbody>' + (retr_rows or '<tr><td colspan="4">No retrieval data — re-run the orchestrator (hidden queries now persist per row).</td></tr>') + '</tbody></table>'
+            '<h3>Temporal Drift (model re-index vs your site)</h3>'
+            '<table><thead><tr><th>Brand</th><th>Baseline snapshot</th><th>Current snapshot</th><th>Delta</th></tr></thead>'
+            '<tbody>' + (drift_rows or '<tr><td colspan="4">No paired snapshot runs — set temporal_grounding.compare_mode=paired.</td></tr>') + '</tbody></table>'
+            '<h3>Cost Savings (measured)</h3>' + (save_html or '<p>No measured spend yet.</p>') +
+            '</div>'
+        )
+
     def _generate_html(self, results: Dict, charts: List) -> str:
         somv = results.get('somv', {})
         overall = somv.get('overall', {})
@@ -444,6 +539,12 @@ class DashboardGenerator:
         # Commerce + Traffic hero (Stage 0 revenue): surface first, not tab 12.
         commerce = results.get('commerce', {}) or {}
         traffic = results.get('traffic_join', {}) or {}
+        # CMO executive brief (funnel SoMV, missing sources, hallucinations,
+        # remediation assets, ROI, parity, retrieval, temporal, savings).
+        try:
+            cmo_html = self._cmo_executive_block(results)
+        except Exception as e:
+            cmo_html = '<div class="section"><h2>Executive Brief</h2><p>Executive block failed: %s</p></div>' % str(e)[:200]
 
         charts_html = ""
         for title, fig in charts:
@@ -1011,6 +1112,8 @@ class DashboardGenerator:
             · AI revenue share: <strong>{(traffic.get('ga4_ai_referrers', {}) or {}).get('ai_revenue_share', 'n/a')}</strong>
             · Evidence: {(traffic.get('ga4_ai_referrers', {}) or {}).get('evidence', 'import GSC/GA4/Bing via scripts/import_traffic.py')}</div>
         </div>
+
+        {cmo_html}
 
         <div class="stats-grid">
             <div class="stat-card">

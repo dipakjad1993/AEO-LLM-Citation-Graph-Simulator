@@ -96,6 +96,36 @@
 - `GeoTemporal` emits EU-vs-US leader split + per-locale GBP/`LocalBusiness` checklist;
   persist weekly to trend store. PDF export: dashboard "Geo" tab → Print/PDF.
 
+## 12. Enterprise collection wiring (System Inputs -> executed runs)
+
+The first-page form is not decoration — `server.js POST /api/config` persists it to
+`data/uploads/system_config/system_inputs.json`, and the orchestrator executes it:
+
+- **Markets** (`geo_localization.markets`, e.g. `US-NY, UK-LND, APAC-SGP`): sessions tagged
+  `market` + `country`; budget split cost-flat. Egress rotation per market group via
+  `AEO_PROXY_<MARKET>` env (wins) → `execution.playwright.proxy_map` → default proxy →
+  direct (every fallback logged per market group). Playwright contexts get per-market
+  locale/timezone; SERP gets metro `location_code` (+ `location_map` overrides, country
+  fallback logged per row); Anthropic gets `user_location`. Provider APIs without a
+  retrieval-location control (OpenAI/Perplexity/Grok) record `geo_applied` honestly —
+  market tag + UI locale/proxy carry geo there.
+- **Temporal paired A/B** (`temporal_grounding.compare_mode=paired` + two exact snapshot
+  IDs): every session runs against both snapshots, rows tagged `baseline`/`current`,
+  snapshot IDs resolve to providers by family fallback (logged, cached). Analysis
+  attributes deltas to model re-index vs your site; single-snapshot runs report
+  `no_snapshot_data` instead of guessing.
+- **RAG flags** (`dynamic_search_context`): `max_search_queries_per_prompt`,
+  `query_templates`, `source_priority` ride into provider calls where supported and are
+  recorded per row; `capture_hidden_queries=false` strips provider-reported queries at
+  persist time (local fan-out decomposition is always kept and labeled).
+- **Scale** (`--scale pilot|standard|enterprise`, `--prompts N`, `--shard i/n`):
+  enterprise = 5,000 sessions sharded across executions. A pre-flight budget gate
+  refuses runs whose estimate exceeds `cost_tracking.daily_budget_usd` — with numbers,
+  before a dollar is spent. `max_calls_per_run` still truncates deterministically.
+- **New analysis**: `retrieval_diagnostics` (hidden-query vs cited-domain mismatch =
+  reformulation failure, per-family adapter gaps), `temporal_drift`, `agency_savings`
+  (measured spend vs $15-25k/mo retainers), all in the dashboard Executive Brief.
+
 ## 9. Agent readiness (MCP/UCP/ACP before llms.txt polish)
 
 - Weights: MCP/WebMCP 35% (`/.well-known/mcp.json` probe + JSON validation **+ live tool-call

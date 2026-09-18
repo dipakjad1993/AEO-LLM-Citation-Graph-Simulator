@@ -280,4 +280,72 @@ test('Perplexity provider prefers flat citations[] over regex', async () => {
   assert.equal(citations[0].url, 'https://example.com/a');
 });
 
+// ── Enterprise collection wiring (marketGeo: markets, proxies, snapshots, scale) ──
+test('marketGeo: market parsing + locale mapping', async () => {
+  const { normalizeMarket, parseMarket, MARKET_LOCALE } = await import('./marketGeo.js');
+  assert.equal(normalizeMarket('us-ny'), 'US-NY');
+  assert.equal(normalizeMarket('us'), 'US');
+  assert.equal(normalizeMarket('  uk_lnd '), 'UK-LND');
+  const p = parseMarket('UK-LND');
+  assert.equal(p.country, 'uk');
+  assert.equal(p.metro, 'LND');
+  assert.equal(MARKET_LOCALE['APAC-SGP'].timezone, 'Asia/Singapore');
+});
+
+test('marketGeo: proxy resolution order (env > map > default > none)', async () => {
+  const { resolveProxyForMarket } = await import('./marketGeo.js');
+  const exec = { playwright: { proxy: { enabled: false }, proxy_map: { 'US-NY': { server: 'http://map:8080' } } } };
+  assert.equal(resolveProxyForMarket('US-NY', exec, {}).proxy.server, 'http://map:8080');
+  assert.equal(resolveProxyForMarket('US-NY', exec, {}).source, 'proxy_map:US-NY');
+  assert.equal(resolveProxyForMarket('UK-LND', exec, {}).proxy, null);
+  const viaEnv = resolveProxyForMarket('US-NY', exec, { AEO_PROXY_US_NY: 'http://env:9090' });
+  assert.equal(viaEnv.proxy.server, 'http://env:9090');
+  assert.match(viaEnv.source, /env:AEO_PROXY_US_NY/);
+  const viaJson = resolveProxyForMarket('DE-BER', { playwright: {} }, { AEO_PROXY_DE_BER: '{"server":"http://j:1","username":"u"}' });
+  assert.equal(viaJson.proxy.username, 'u');
+});
+
+test('marketGeo: markets resolve from form, fall back to countries', async () => {
+  const { resolveMarkets } = await import('./marketGeo.js');
+  assert.deepEqual(resolveMarkets({ geo_localization: { markets: ['us-ny', 'uk-lnd'] } }, { countries: ['us'] }), ['US-NY', 'UK-LND']);
+  assert.deepEqual(resolveMarkets({}, { countries: ['de', 'fr'] }), ['DE', 'FR']);
+  assert.deepEqual(resolveMarkets({}, {}), ['US']);
+});
+
+test('marketGeo: paired snapshots duplicate + tag, single mode tags current', async () => {
+  const { pairSnapshots, resolveProviderForSnapshot } = await import('./marketGeo.js');
+  const sessions = [{ sessionId: 'a' }, { sessionId: 'b' }];
+  const paired = pairSnapshots(sessions, { compare_mode: 'paired', baseline_model_snapshot: 'gpt-4o-2025-03-26', current_model_snapshot: 'gpt-5.5' });
+  assert.equal(paired.length, 4);
+  assert.equal(paired[0].snapshot, 'baseline');
+  assert.equal(paired[0].snapshotModel, 'gpt-4o-2025-03-26');
+  assert.equal(paired[1].snapshot, 'current');
+  const single = pairSnapshots(sessions, {});
+  assert.ok(single.every((s) => s.snapshot === 'current' && s.snapshotModel === null));
+  assert.equal(resolveProviderForSnapshot('gpt-4o-2025-03-26', { openai: {}, anthropic: {} }), 'openai');
+  assert.equal(resolveProviderForSnapshot('claude-opus-4-7-20260201', { openai: {}, anthropic: {} }), 'anthropic');
+  assert.equal(resolveProviderForSnapshot('mystery-9', { openai: {} }), null);
+});
+
+test('marketGeo: sharding is deterministic + scale presets sane', async () => {
+  const { shardSessions, PROMPT_SCALES, estimateEnterpriseCalls } = await import('./marketGeo.js');
+  const sessions = [1, 2, 3, 4, 5, 6].map((i) => ({ sessionId: String(i) }));
+  assert.deepEqual(shardSessions(sessions, 1, 3).map((s) => s.sessionId), ['1', '4']);
+  assert.deepEqual(shardSessions(sessions, 2, 3).map((s) => s.sessionId), ['2', '5']);
+  assert.equal(shardSessions(sessions).length, 6);
+  assert.equal(PROMPT_SCALES.enterprise.promptCount, 5000);
+  const est = estimateEnterpriseCalls({ sessions: 5000, turnsPerSession: 4, models: 6, repeats: 1, twins: 1, snapshots: 1 });
+  assert.equal(est.calls, 120000);
+  assert.equal(est.overFanoutGuard, true);
+});
+
+test('SerpProvider: market-aware location resolution with honest fallback', async () => {
+  const { SerpProvider } = await import('../providers/serp.js');
+  assert.equal(SerpProvider.resolveLocation('us-ny', {}).code, 2840);
+  assert.equal(SerpProvider.resolveLocation('xx-zz', {}).source.startsWith('country fallback'), true);
+  const over = SerpProvider.resolveLocation('us-ny', { 'us-ny': 1234 });
+  assert.equal(over.code, 1234);
+  assert.equal(over.source, 'location_map override');
+});
+
 console.log('Unit tests complete.');

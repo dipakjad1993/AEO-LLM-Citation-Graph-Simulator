@@ -160,6 +160,20 @@ function validateExecution(execution) {
   if (!Number.isInteger(retry.attempts) || retry.attempts < 0) {
     errors.push('execution.json: retry.attempts must be a non-negative integer');
   }
+  if (execution.prompt_scale !== undefined && execution.prompt_scale !== null
+      && !['pilot', 'standard', 'enterprise'].includes(execution.prompt_scale)) {
+    errors.push('execution.json: prompt_scale must be pilot|standard|enterprise (or null)');
+  }
+  const shard = execution.prompt_shard;
+  if (shard !== undefined && (typeof shard !== 'object'
+      || !Number.isInteger(shard.index) || !Number.isInteger(shard.total)
+      || shard.index < 1 || shard.total < 1 || shard.index > shard.total)) {
+    errors.push('execution.json: prompt_shard must be {index,total} with 1 <= index <= total (e.g. {"index":2,"total":5})');
+  }
+  const pmap = execution.playwright?.proxy_map;
+  if (pmap !== undefined && (typeof pmap !== 'object' || Array.isArray(pmap))) {
+    errors.push('execution.json: playwright.proxy_map must be an object keyed by market (e.g. "US-NY")');
+  }
   return errors;
 }
 

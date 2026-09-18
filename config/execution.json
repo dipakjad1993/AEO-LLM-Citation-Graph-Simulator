@@ -5,6 +5,8 @@
     "modes": ["hybrid", "api_only", "playwright_only"],
     "playwright_sample_rate": 0.15,
     "prompt_count": 50,
+    "prompt_scale": null,
+    "prompt_shard": { "index": 1, "total": 1 },
     "max_concurrent_api": 10,
     "max_concurrent_playwright": 3,
     "max_calls_per_run": 2500,
@@ -49,7 +51,10 @@
     "serp": {
       "provider": "serper",
       "description": "SERP API for Google AI Overviews / AI Mode / Copilot (DataForSEO | serper | zenserp). Set SERP_API_KEY + SERP_PROVIDER.",
-      "geo": "us"
+      "geo": "us",
+      "location_map": {
+        "_comment": "Metro DataForSEO location_code overrides by market (lowercase key). Unknown metros fall back to country code and log location_source per row."
+      }
     },
     "retry": {
       "attempts": 3,
@@ -102,6 +107,12 @@
         "server": "",
         "username": "",
         "password": ""
+      },
+      "proxy_map": {
+        "_comment": "Per-market residential egress for geo rotation (US-NY, UK-LND, APAC-SGP...). Env AEO_PROXY_<MARKET> (e.g. AEO_PROXY_US_NY) wins over this map; map wins over proxy default. Value: full proxy URL or {server,username,password}. Empty = direct egress (logged per market group).",
+        "US-NY": { "server": "", "username": "", "password": "" },
+        "UK-LND": { "server": "", "username": "", "password": "" },
+        "APAC-SGP": { "server": "", "username": "", "password": "" }
       },
       "browser_args": [
         "--disable-blink-features=AutomationControlled",

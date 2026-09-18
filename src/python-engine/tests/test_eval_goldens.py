@@ -101,6 +101,47 @@ def main():
     except Exception as ex:
         check('lite-import-guard', False, str(ex))
 
+    # 7. Retrieval diagnostics (RAG invalidation vectors) on synthetic frame
+    from analytics.enterprise_insights import EnterpriseInsights as _EI2
+    _cfg2 = {'entity_maps': {'entity_maps': {'your_brand': {'primary_name': 'Acme', 'aliases': []},
+                                             'competitors': [{'primary_name': 'Rival'}]}}}
+    _e2 = _EI2(_cfg2)
+    _rdf = pl.DataFrame([
+        {'model_id': 'gpt-5.5', 'raw_text': 'Acme wins', 'citations': [],
+         'hidden_search_queries': ['best analytics platform'], 'search_performed': True},
+        {'model_id': 'gpt-5.5', 'raw_text': 'Acme wins per x', 'citations': [{'url': 'https://x.com/a'}],
+         'hidden_search_queries': ['best analytics platform'], 'search_performed': True},
+        {'model_id': 'sonar-pro', 'raw_text': 'Rival wins per y', 'citations': [{'url': 'https://y.com/b'}],
+         'hidden_search_queries': [], 'search_performed': True},
+    ])
+    _rd = _e2.retrieval_diagnostics(_rdf)
+    _gpt = _rd.get('per_model', {}).get('OpenAI', {})
+    check('retrieval-reform-fail', _gpt.get('reformulation_failure_rate') == 0.5, str(_gpt))
+    _son = _rd.get('per_model', {}).get('Perplexity', {})
+    check('retrieval-adapter-gap', _son.get('adapter_gap_share') == 1.0, str(_son))
+    check('retrieval-dead-queries', len(_rd.get('top_dead_queries', [])) == 1, str(_rd.get('top_dead_queries')))
+
+    # 8. Temporal drift: identical prompts, snapshot delta = model drift
+    _e3 = _EI2({'entity_maps': {'entity_maps': {'your_brand': {'primary_name': 'Acme', 'aliases': []},
+                                                'competitors': [{'primary_name': 'Rival'}]}},
+                'system_inputs': {'temporal_grounding': {'compare_mode': 'paired'}}})
+    _tdf = pl.DataFrame(
+        [{'snapshot': 'baseline', 'raw_text': 'Acme is the top pick'}] * 8 +
+        [{'snapshot': 'baseline', 'raw_text': 'Rival is the top pick'}] * 2 +
+        [{'snapshot': 'current', 'raw_text': 'Acme is the top pick'}] * 3 +
+        [{'snapshot': 'current', 'raw_text': 'Rival is the top pick'}] * 7)
+    _td = _e3.temporal_drift(_tdf)
+    _acme = _td.get('brand_deltas', {}).get('Acme', {})
+    check('temporal-delta', _acme.get('delta') == -0.5 and len(_td.get('findings', [])) >= 1, str(_acme))
+    _td2 = _e3.temporal_drift(pl.DataFrame([{'snapshot': 'current', 'raw_text': 'Acme wins'}]))
+    check('temporal-honest-single', _td2.get('status') == 'no_snapshot_data', str(_td2.get('status')))
+
+    # 9. Agency savings: measured spend math + no-spend honesty
+    _sv = _EI2.agency_savings(120.0)
+    check('savings-math', _sv.get('monthly_savings_range_usd') == [14880.0, 24880.0]
+          and _sv.get('annual_savings_range_usd') == [178560.0, 298560.0], str(_sv))
+    check('savings-honest', _EI2.agency_savings(0).get('status') == 'no_spend')
+
     fails = [r for r in results if r[1] == FAIL]
     print(f'\n{len(results) - len(fails)}/{len(results)} evals passed.')
     sys.exit(1 if fails else 0)

@@ -63,3 +63,12 @@ Collected via SERP API (`SERP_API_KEY + SERP_PROVIDER: serper|dataforseo|zenserp
 not chat APIs. AIO + AI Mode share ~13.7% citations but are separate surfaces —
 track fan-out queries independently. `location_code` is supported per row for
 AI Mode geo (see `docs/enterprise.md` § Geo Matrix).
+
+## Retrieval-geo control matrix (honest)
+
+| Provider | Geo control | Notes |
+|---|---|---|
+| Anthropic | `user_location` (country) | Sent per call from session market |
+| SERP (AIO/AI Mode/Copilot) | metro `location_code` | Metro table + `serp.location_map` override, country fallback logged per row |
+| OpenAI / Perplexity / Grok / Gemini | none at API level | Market tag + Playwright per-market locale/timezone/proxy carry geo; `geo_applied` records this per row |
+| Playwright UI | locale + timezone + residential proxy | Rotated per market group (`AEO_PROXY_<MARKET>` > `proxy_map` > default) |

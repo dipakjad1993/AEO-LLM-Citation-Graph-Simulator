@@ -19,7 +19,7 @@ export class SerpProvider {
     const lastUser = [...messages].reverse().find(m => m.role === 'user');
     const query = lastUser?.content || '';
     const geo = options.geo || process.env.SERP_GEO || 'us';
-    const { answer, citations, fanout } = await this.fetchSerp(query, geo);
+    const { answer, citations, fanout, location_code, location_source } = await this.fetchSerp(query, geo);
     return {
       raw_text: answer,
       model: this.kind === 'copilot-serp' ? 'copilot-serp' : this.kind === 'ai-mode' ? 'google-ai-mode' : 'google-ai-overviews',
@@ -34,11 +34,28 @@ export class SerpProvider {
       search_requested: true,
       ungrounded: false,
       serp_surface: this.kind,
+      location_code: location_code || null,
+      location_source: location_source || null,
       raw_response: { query, citations, fanout }
     };
   }
 
-  static LOCATION_CODES = { us: 2840, uk: 2826, ca: 2124, au: 2036, de: 2276, fr: 2250, in: 2356, es: 2724, it: 2380, nl: 2528, br: 2076, jp: 2392 };
+  // Country codes + hyper-specific metro markets. Metro DataForSEO codes are
+  // sparse — override any market via execution.serp.location_map (honest: unknown
+  // metros fall back to their country code and the fallback is logged in-row).
+  static LOCATION_CODES = {
+    us: 2840, uk: 2826, ca: 2124, au: 2036, de: 2276, fr: 2250, in: 2356,
+    es: 2724, it: 2380, nl: 2528, br: 2076, jp: 2392, sg: 2702,
+    'us-ny': 2840, 'us-aus': 2840, 'us-sfo': 2840, 'uk-lnd': 2826,
+    'de-ber': 2276, 'fr-par': 2250, 'apac-sgp': 2702, 'apac-tok': 2392, 'apac-syd': 2036
+  };
+  static resolveLocation(geo, locationMap = {}) {
+    const key = String(geo || 'us').toLowerCase();
+    if (locationMap[key]) return { code: locationMap[key], source: 'location_map override' };
+    if (SerpProvider.LOCATION_CODES[key]) return { code: SerpProvider.LOCATION_CODES[key], source: 'metro/country table' };
+    const country = key.split('-')[0];
+    return { code: SerpProvider.LOCATION_CODES[country] || 2840, source: `country fallback (${country || 'us'})` };
+  }
   async fetchSerp(query, geo) {
     if (!this.apiKey) return { answer: '', citations: [], fanout: [] };
     const logErr = (provider, err) => console.warn(`[SERP:${provider}] fetch failed for "${String(query).slice(0, 80)}": ${err?.response?.status || ''} ${err?.message || err}`);
@@ -56,9 +73,9 @@ export class SerpProvider {
         return { answer: aio, citations, fanout: d.relatedSearches?.map(s => s.query).filter(Boolean) || [] };
       }
       if (this.serpProvider === 'dataforseo') {
-        // P0 FIX: 2840 is US-only. Map geo->location_code so multi-country runs work.
+        // Market-aware location_code (metro table + user location_map + country fallback).
         const login = process.env.DATAFORSEO_LOGIN || '';
-        const loc = SerpProvider.LOCATION_CODES[String(geo || 'us').toLowerCase()] || 2840;
+        const { code: loc, source: locSource } = SerpProvider.resolveLocation(geo, this.config?.execution?.serp?.location_map);
         const r = await axios.post('https://api.dataforseo.com/v3/serp/google/organic/live/advanced',
           [{ keyword: query, location_code: loc, language_code: 'en', device: 'desktop', os: 'windows' }],
           { auth: { username: login, password: this.apiKey }, timeout: 60000 });
@@ -67,7 +84,7 @@ export class SerpProvider {
         const answer = aio?.text || aio?.snippet || '';
         const citations = items.filter(i => i.url || i.link).map(i => ({ url: i.url || i.link, title: i.title || null, snippet: i.snippet || null }));
         const fanout = items.filter(i => i.type === 'people_also_ask').flatMap(i => (i.items || []).map(x => x.title)).filter(Boolean);
-        return { answer, citations, fanout };
+        return { answer, citations, fanout, location_code: loc, location_source: locSource };
       }
       // zenserp generic
       // P0 FIX: tbm:nws is the NEWS vertical — wrong for AIO/AI-Mode answers. Drop it so we

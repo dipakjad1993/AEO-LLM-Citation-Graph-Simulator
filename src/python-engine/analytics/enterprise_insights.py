@@ -618,7 +618,12 @@ class EnterpriseInsights:
 
         if self.primary_brand and result['by_funnel_stage']:
             best = None
-            for stage, shares in result['by_funnel_stage'].items():
+            # Canonical stage order + strict > : ties keep the earliest stage, so
+            # all-zero (or tied) frames produce the SAME finding every run.
+            for stage in ('Top-of-Funnel (Education)', 'Middle-of-Funnel (Evaluation)', 'Bottom-of-Funnel (Decision)'):
+                shares = result['by_funnel_stage'].get(stage)
+                if not shares:
+                    continue
                 mine = shares.get(self.primary_brand, 0)
                 if best is None or mine > best[1]:
                     best = (stage, mine)
@@ -631,6 +636,157 @@ class EnterpriseInsights:
     def set_full_context(self, ctx: Dict) -> None:
         """Engine-provided full analysis context (triple_stats, verification, ...)."""
         self._full_context = dict(ctx or {})
+
+    # ────────────────────────────────────────────────────────────────
+    # 8. Retrieval Diagnostics — RAG invalidation vectors
+    # ────────────────────────────────────────────────────────────────
+    def retrieval_diagnostics(self, df: pl.DataFrame) -> Dict:
+        """Why did retrieval fetch the wrong sources? Compares the engine's own
+        hidden search queries (provider-reported truth) against the domains it
+        actually cited. A hidden query that never surfaces in citations is a
+        reformulation failure, not a stupid model."""
+        result = {'per_model': {}, 'top_dead_queries': [], 'findings': [], 'status': 'measured'}  # type: Dict[str, Any]
+        need = {'model_id', 'hidden_search_queries', 'citations'}
+        if not need.issubset(set(df.columns)):
+            missing = sorted(need - set(df.columns))
+            result['status'] = 'no_data'
+            result['message'] = 'Row columns missing: %s. Re-run the orchestrator (it now persists hidden queries + citations per row).' % ', '.join(missing)
+            return result
+        per_model = defaultdict(lambda: {'rows': 0, 'with_hidden': 0, 'reform_fail': 0, 'memory_only': 0, 'adapter_gap': 0})
+        dead = Counter()
+        try:
+            rows = df.select(['model_id', 'hidden_search_queries', 'citations', 'search_performed']).to_dicts()
+        except Exception:
+            rows = df.select(['model_id', 'hidden_search_queries', 'citations']).to_dicts()
+            for r in rows:
+                r['search_performed'] = True
+        for r in rows:
+            fam = _family(r.get('model_id') or '')
+            s = per_model[fam]
+            s['rows'] += 1
+            hidden = [q for q in (r.get('hidden_search_queries') or []) if isinstance(q, str) and q.strip()]
+            cites = r.get('citations') or []
+            domains = set()
+            for c in cites:
+                d = _domain(c.get('url') if isinstance(c, dict) else str(c))
+                if d:
+                    domains.add(d)
+            if hidden:
+                s['with_hidden'] += 1
+                if not domains:
+                    s['reform_fail'] += 1
+                    for q in hidden[:3]:
+                        dead[q[:120]] += 1
+            else:
+                if not domains:
+                    s['memory_only'] += 1
+                else:
+                    # Citations exist but the engine reported no queries: the provider
+                    # API exposes no query surface (e.g. Perplexity/Grok) — adapter
+                    # gap, recorded honestly per family, never averaged away.
+                    s['adapter_gap'] += 1
+        for fam, s in per_model.items():
+            n = s['rows'] or 1
+            result['per_model'][fam] = {
+                'rows': s['rows'],
+                'hidden_query_coverage': round(s['with_hidden'] / n, 4),
+                'reformulation_failure_rate': round(s['reform_fail'] / max(s['with_hidden'], 1), 4),
+                'memory_only_share': round(s['memory_only'] / n, 4),
+                'adapter_gap_share': round(s['adapter_gap'] / n, 4),
+            }
+            if s['with_hidden'] and s['reform_fail'] / s['with_hidden'] > 0.3:
+                result['findings'].append(
+                    '%s: %.0f%% of retrieved queries never surface in citations — fix the query reformulation path (allowed_domains, search_context_size, query_templates), not the answer copy.' % (fam, s['reform_fail'] / s['with_hidden']))
+        result['top_dead_queries'] = [{'query': q, 'count': c} for q, c in dead.most_common(10)]
+        if not result['per_model']:
+            result['status'] = 'no_data'
+        return result
+
+    # ────────────────────────────────────────────────────────────────
+    # 9. Temporal Drift Attribution — model re-index vs your site
+    # ────────────────────────────────────────────────────────────────
+    def temporal_drift(self, df: pl.DataFrame) -> Dict:
+        """Isolates SoMV shifts caused by the MODEL (re-index between snapshots)
+        from shifts caused by YOUR site. Requires paired snapshot runs
+        (temporal_grounding.compare_mode=paired with two exact snapshot IDs)."""
+        result = {'snapshots': {}, 'brand_deltas': {}, 'freshness': {}, 'findings': [], 'status': 'measured'}  # type: Dict[str, Any]
+        cfg = self.temporal or {}
+        result['config'] = {
+            'compare_mode': cfg.get('compare_mode'),
+            'baseline': cfg.get('baseline_model_snapshot'),
+            'current': cfg.get('current_model_snapshot'),
+            'freshness_timestamp': cfg.get('content_freshness_timestamp'),
+        }
+        cols = set(df.columns)
+        if 'snapshot' not in cols or 'raw_text' not in cols:
+            result['status'] = 'no_snapshot_data'
+            result['message'] = 'No snapshot-tagged rows. Set temporal_grounding.compare_mode=paired with two snapshot IDs in System Inputs, then re-run.'
+            return result
+        snaps = {}
+        try:
+            for r in df.select(['snapshot', 'raw_text']).to_dicts():
+                snaps.setdefault(str(r.get('snapshot') or 'current'), []).append(r.get('raw_text') or '')
+        except Exception as e:
+            result['status'] = 'error'
+            result['message'] = str(e)
+            return result
+        result['snapshots'] = {k: len(v) for k, v in snaps.items()}
+        if 'baseline' not in snaps or 'current' not in snaps:
+            result['status'] = 'no_snapshot_data'
+            result['message'] = 'Only one snapshot present (%s). Paired A/B needs both baseline and current rows from the same prompt set.' % '/'.join(sorted(snaps))
+            return result
+        for brand in self.all_brands:
+            rx = self._brand_re.get(brand)
+            if rx is None:
+                continue
+            shares = {}
+            for snap, texts in snaps.items():
+                hits = sum(1 for t in texts if rx.search(t))
+                shares[snap] = round(hits / max(len(texts), 1), 4)
+            delta = round(shares['current'] - shares['baseline'], 4)
+            result['brand_deltas'][brand] = {'baseline': shares['baseline'], 'current': shares['current'], 'delta': delta}
+            if abs(delta) >= 0.1:
+                direction = 'gained' if delta > 0 else 'lost'
+                result['findings'].append(
+                    '%s %s %.0f points between model snapshots with identical prompts — this delta is model re-index drift, not your site changing. Do not rewrite content for it; re-baseline instead.' % (brand, direction, abs(delta)))
+        # Freshness staleness vs the pinned timestamp.
+        ts = (cfg.get('content_freshness_timestamp') or '').strip()
+        if ts:
+            try:
+                from datetime import date as _date
+                pinned = _date.fromisoformat(ts[:10])
+                age = (_date.today() - pinned).days
+                result['freshness'] = {'pinned': ts[:10], 'age_days': age,
+                                       'stale_for_chatgpt': age > 30, 'stale_for_claude': age > 90, 'stale_for_aio': age > 365}
+                if age > 90:
+                    result['findings'].append('Content freshness pin is %d days old — past Claude/AIO windows. Refresh money pages and re-pin.' % age)
+            except Exception:
+                result['freshness'] = {'pinned': ts, 'parse': 'failed (use YYYY-MM-DD)'}
+        return result
+
+    # ────────────────────────────────────────────────────────────────
+    # 10. Agency Cost Savings — measured spend vs $15-25k/mo retainers
+    # ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def agency_savings(spend_usd: float, retainer_low: float = 15000.0, retainer_high: float = 25000.0) -> Dict:
+        """Pure math on MEASURED API spend. Never estimates the spend itself."""
+        try:
+            spend = float(spend_usd or 0.0)
+        except Exception:
+            spend = 0.0
+        if spend <= 0:
+            return {'status': 'no_spend', 'message': 'No measured API spend found (cost_report.json missing or zero). Run the orchestrator to measure before claiming savings.'}
+        low_save = round(retainer_low - spend, 2)
+        high_save = round(retainer_high - spend, 2)
+        return {
+            'status': 'measured',
+            'measured_spend_usd': round(spend, 2),
+            'agency_retainer_range_usd': [retainer_low, retainer_high],
+            'monthly_savings_range_usd': [low_save, high_save],
+            'annual_savings_range_usd': [round(low_save * 12, 2), round(high_save * 12, 2)],
+            'payback_multiple': '%dx-%dx' % (round(retainer_low / spend, 1), round(retainer_high / spend, 1)),
+            'finding': 'This run cost $%.2f in API calls vs a $15k-25k/mo GEO agency retainer for manual citation monitoring.' % spend,
+        }
 
     # ────────────────────────────────────────────────────────────────
     def analyze(self, df: pl.DataFrame, graphs: Dict, embedding: Dict, somv: Dict, graph_stats: Dict) -> Dict:
@@ -677,6 +833,16 @@ class EnterpriseInsights:
         except Exception as e:
             logger.warning(f'SoMV trendlines failed: {e}')
             results['somv_trendlines'] = {'status': 'error', 'message': str(e)}
+        try:
+            results['retrieval_diagnostics'] = self.retrieval_diagnostics(df)
+        except Exception as e:
+            logger.warning(f'Retrieval diagnostics failed: {e}')
+            results['retrieval_diagnostics'] = {'status': 'error', 'message': str(e)}
+        try:
+            results['temporal_drift'] = self.temporal_drift(df)
+        except Exception as e:
+            logger.warning(f'Temporal drift failed: {e}')
+            results['temporal_drift'] = {'status': 'error', 'message': str(e)}
         return results
 
     def save(self, results: Dict, output_dir: Path):

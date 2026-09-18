@@ -17,6 +17,10 @@ import { PlaywrightScraper } from './scrapers/playwrightScraper.js';
 import { PromptGenerator } from './utils/promptGenerator.js';
 import { ResponseExtractor } from './utils/responseExtractor.js';
 import { CostTracker, BudgetExceededError } from './utils/costTracker.js';
+import {
+  normalizeMarket, parseMarket, resolveMarkets, resolveProxyForMarket,
+  pairSnapshots, resolveProviderForSnapshot, PROMPT_SCALES, shardSessions
+} from './utils/marketGeo.js';
 import { RateLimiter } from './utils/rateLimiter.js';
 import { ResponseVerifier } from './utils/responseVerifier.js';
 import { validateAllConfigs, ConfigError } from '../../config/validator.js';
@@ -71,12 +75,17 @@ class AEOOrchestrator {
       concurrency: this.config.execution?.verification?.citation_concurrency || 8
     });
     this.rateLimiters = {};
+    this._providerCache = new Map();
     this.apiQueue = new PQueue({ concurrency: this.config.execution.max_concurrent_api });
     this.playwrightQueue = new PQueue({ concurrency: this.config.execution.max_concurrent_playwright });
     this.results = [];
     this.sessionId = uuidv4();
     this.runId = randomRunId();
     this.startTime = null;
+    // Enterprise system inputs (first-page form -> /api/config -> system_inputs.json).
+    // Until this file exists the orchestrator runs on config-file defaults and says so.
+    this.sysInputs = {};
+    this.sysInputsSource = 'config defaults (no system_inputs.json found)';
     this.runDir = join(ROOT_DIR, 'data', 'output', `run_${Date.now()}_${this.runId}`);
 
     this.ensureDirectories();
@@ -115,6 +124,36 @@ class AEOOrchestrator {
       }
     }
     return output;
+  }
+
+  loadSystemInputs() {
+    // Precedence: run-dir uploads > data/uploads/system_config/ > data/system_inputs.json.
+    // Written by server.js POST /api/config from the System Inputs form. Never
+    // throws: a missing file means "run on config defaults", logged honestly.
+    const candidates = [
+      join(ROOT_DIR, 'data', 'uploads', 'system_config', 'system_inputs.json'),
+      join(ROOT_DIR, 'data', 'system_inputs.json')
+    ];
+    for (const p of candidates) {
+      try {
+        if (existsSync(p)) {
+          this.sysInputs = JSON.parse(readFileSync(p, 'utf8'));
+          this.sysInputsSource = p;
+          logger.info(`System inputs loaded from ${p}`, {
+            markets: this.sysInputs?.geo_localization?.markets,
+            temporal: this.sysInputs?.temporal_grounding?.compare_mode,
+            ragCapture: this.sysInputs?.dynamic_search_context?.capture_hidden_queries
+          });
+          return this.sysInputs;
+        }
+      } catch (err) {
+        logger.warn(`Ignoring unreadable system inputs at ${p}`, { error: err.message });
+      }
+    }
+    this.sysInputs = {};
+    this.sysInputsSource = 'config defaults (no system_inputs.json found)';
+    logger.info('No system_inputs.json — running on config-file defaults (geo/temporal/RAG layers inactive)');
+    return this.sysInputs;
   }
 
   ensureDirectories() {
@@ -172,6 +211,9 @@ class AEOOrchestrator {
     if (!this.config.entityMaps?.entity_maps?.competitors || this.config.entityMaps.entity_maps.competitors.length === 0) {
       throw new Error('FATAL: No competitors configured. Add at least one competitor to config/entity_maps.json.');
     }
+
+    // Enterprise layers: RAG / temporal / geo inputs from the System Inputs form.
+    this.loadSystemInputs();
 
     const apiKeyMap = {
       openai: process.env.OPENAI_API_KEY,
@@ -266,17 +308,55 @@ class AEOOrchestrator {
     logger.info('Starting AEO simulation run', { sessionId: this.sessionId });
     this.modelFilter = Array.isArray(options.models) ? new Set(options.models) : null;
 
-    const countries = this.config.execution?.geo?.countries?.length
-      ? this.config.execution.geo.countries
-      : [this.config.execution?.geo?.default_country || 'us'];
-    const perCountry = Math.max(1, Math.ceil((options.promptCount || this.config.execution.prompt_count || 50) / countries.length));
+    // Prompt scale presets: pilot 50 / standard 500 / enterprise 5000.
+    // 5000 sessions NEVER run in one shot: shard across executions (prompt_shard)
+    // and pass the hard budget gate below.
+    const scaleName = options.scale || this.config.execution?.prompt_scale || null;
+    const scalePreset = scaleName && PROMPT_SCALES[scaleName] ? PROMPT_SCALES[scaleName] : null;
+    const targetSessions = options.promptCount
+      || (scalePreset ? scalePreset.promptCount : null)
+      || this.config.execution.prompt_count || 50;
+    if (scalePreset) logger.info(`Prompt scale '${scaleName}': ${scalePreset.description}`);
+
+    // Hyper-specific markets (US-NY, UK-LND, APAC-SGP) from the System Inputs
+    // form; falls back to execution.geo.countries. Budget is SPLIT across
+    // markets (cost-flat), each session tagged with market + country.
+    const markets = resolveMarkets(this.sysInputs, this.config.execution?.geo);
+    const perMarket = Math.max(1, Math.ceil(targetSessions / markets.length));
     let prompts = [];
-    for (const country of countries) {
-      const batch = await this.promptGenerator.generateAllPrompts(perCountry, options.personas || undefined);
-      for (const s of batch) { s.geo = String(country).toLowerCase(); }
+    for (const market of markets) {
+      const parsed = parseMarket(market);
+      const batch = await this.promptGenerator.generateAllPrompts(perMarket, options.personas || undefined);
+      for (const s of batch) { s.market = parsed.market; s.geo = parsed.country; }
       prompts.push(...batch);
     }
-    logger.info(`Generated ${prompts.length} multi-turn prompt sessions across ${countries.length} countr[y/ies]: ${countries.join(',')}`);
+    prompts = prompts.slice(0, targetSessions);
+
+    // Temporal paired A/B: duplicate sessions tagged baseline/current when the
+    // form requests paired compare with two exact snapshot IDs.
+    const temporal = this.sysInputs?.temporal_grounding || {};
+    prompts = pairSnapshots(prompts, temporal);
+    if (prompts.length && prompts[0].snapshotModel) {
+      logger.info(`Temporal paired mode: ${temporal.baseline_model_snapshot} vs ${temporal.current_model_snapshot} (${prompts.length} tagged sessions)`);
+    }
+
+    // Sharding for enterprise scale: --shard 2/5 runs a deterministic slice.
+    const shardIndex = options.shard || this.config.execution?.prompt_shard?.index || 1;
+    const shardTotal = options.shards || this.config.execution?.prompt_shard?.total || 1;
+    if (shardTotal > 1) {
+      const before = prompts.length;
+      prompts = shardSessions(prompts, shardIndex, shardTotal);
+      logger.info(`Shard ${shardIndex}/${shardTotal}: ${prompts.length} of ${before} sessions in this execution`);
+    }
+    logger.info(`Generated ${prompts.length} multi-turn prompt sessions across markets: ${markets.join(',')} (inputs: ${this.sysInputsSource})`);
+
+    // Pre-flight budget gate: refuse (loudly, with numbers) instead of dying mid-run.
+    const est = this.estimatePlanCost(prompts);
+    const budget = this.config.execution?.cost_tracking?.daily_budget_usd || 500;
+    logger.info(`Cost estimate: ~${est.calls} calls, ~$${est.estimatedTotal.toFixed(2)} vs $${budget}/day budget`);
+    if (est.estimatedTotal > budget) {
+      throw new Error(`BUDGET GATE: estimated $${est.estimatedTotal.toFixed(2)} exceeds daily budget $${budget} for ${est.calls} calls. Shard the run (--shard i/n), cut --prompts, or raise cost_tracking.daily_budget_usd.`);
+    }
 
     const executionPlan = this.buildExecutionPlan(prompts);
     logger.info(`Execution plan: ${executionPlan.length} total API calls across ${Object.keys(this.providers).length} providers`);
@@ -323,6 +403,8 @@ class AEOOrchestrator {
       const shouldUsePlaywright = mode !== 'api_only' && this.playwrightScraper && Math.random() < playwrightSampleRate;
       // Full, deterministic coverage: every configured API model answers every prompt.
       const models = this.selectModelsForPrompt(promptSession);
+      const market = promptSession.market || promptSession.geo || 'US';
+      const snapshot = promptSession.snapshot || 'current';
 
       for (const turn of promptSession.turns) {
         const isMoneyPrompt = turn.turnType === 'comparison_analysis' || turn.turnType === 'pricing_procurement' || turn.turnIndex === 0;
@@ -336,8 +418,11 @@ class AEOOrchestrator {
             executionId: uuidv4(),
             promptSession: promptSession,
             turn: turn,
-            modelId: modelId,
-            provider: provider,
+            modelId: promptSession.snapshotModel && snapshot === 'baseline' ? promptSession.snapshotModel : modelId,
+            registryModelId: modelId,
+            snapshot,
+            market,
+            provider: this.getProviderForModel(promptSession.snapshotModel && snapshot === 'baseline' ? promptSession.snapshotModel : modelId) || provider,
             usePlaywright: shouldUsePlaywright,
             ragEnabled: true,
             volatilityRep: rep,
@@ -350,6 +435,9 @@ class AEOOrchestrator {
               promptSession: promptSession,
               turn: turn,
               modelId: modelId,
+              registryModelId: modelId,
+              snapshot,
+              market,
               provider: provider,
               usePlaywright: false,
               ragEnabled: false,
@@ -405,11 +493,28 @@ class AEOOrchestrator {
   }
 
   getProviderForModel(modelId) {
+    if (this._providerCache?.has(modelId)) return this._providerCache.get(modelId);
     const modelsConfig = this.config.models.models;
     for (const [providerName, providerModels] of Object.entries(modelsConfig)) {
       if (providerModels[modelId] && this.providers[providerName]) {
-        return { name: providerName, modelConfig: providerModels[modelId], instance: this.providers[providerName] };
+        const hit = { name: providerName, modelConfig: providerModels[modelId], instance: this.providers[providerName] };
+        this._providerCache.set(modelId, hit);
+        return hit;
       }
+    }
+    // Snapshot-ID fallback: user-supplied temporal snapshot IDs (e.g. gpt-4o-2025-03-26)
+    // are not registry keys. Resolve by model family and borrow that provider's
+    // instance with a synthetic config — logged once, never silent.
+    const fallbackName = resolveProviderForSnapshot(modelId, this.providers);
+    if (fallbackName) {
+      logger.info(`Snapshot model '${modelId}' resolved to provider '${fallbackName}' by family fallback`);
+      const hit = {
+        name: fallbackName,
+        modelConfig: { model_id: modelId, display_name: `${modelId} (snapshot)`, supports_web_search: true, supports_seed: false, max_tokens: 4096, temperature_range: [0, 2], supports_system_message: true },
+        instance: this.providers[fallbackName]
+      };
+      this._providerCache.set(modelId, hit);
+      return hit;
     }
     return null;
   }
@@ -436,6 +541,7 @@ class AEOOrchestrator {
     this._historyCache = new Map();
 
     for (const batch of batchedPlan) {
+      await this.rotateProxyForBatch(batch);
       const batchResults = await Promise.allSettled(
         batch.tasks.map(task => this.executeTask(task))
       );
@@ -457,6 +563,26 @@ class AEOOrchestrator {
     }
 
     return results;
+  }
+
+  async rotateProxyForBatch(batch) {
+    // Residential proxy rotation is per market GROUP (Playwright proxy is
+    // launch-level — it cannot change per request). Batches are market-mixed,
+    // so rotate on the majority market and skip relaunch when unchanged.
+    if (!this.playwrightScraper) return;
+    const counts = {};
+    for (const t of batch.tasks || []) {
+      const m = normalizeMarket(t.market || t.promptSession?.market || t.promptSession?.geo || 'US');
+      counts[m] = (counts[m] || 0) + 1;
+    }
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'US';
+    const { proxy, source } = resolveProxyForMarket(top, this.config.execution);
+    try {
+      const changed = await this.playwrightScraper.relaunchWithProxy(proxy);
+      logger.info(`Playwright egress for market ${top}: ${proxy?.server ? proxy.server : 'direct'} (source: ${source}${changed ? ', relaunched' : ', reused'})`);
+    } catch (err) {
+      logger.warn(`Proxy rotation failed for market ${top} — continuing on current egress`, { error: err.message });
+    }
   }
 
   batchByPriority(plan) {
@@ -486,13 +612,16 @@ class AEOOrchestrator {
     const messages = this.buildMessages(promptSession, turn, ragEnabled);
     const modelConfig = provider.modelConfig;
     const temperature = this.config.execution.temperature || 0.15;
+    // Enterprise layers from System Inputs (empty object = config defaults).
+    const ragCfg = this.sysInputs?.dynamic_search_context || {};
+    const market = parseMarket(task.market || promptSession?.market || promptSession?.geo || 'US');
 
     let response;
 
     if (usePlaywright && this.playwrightScraper) {
       response = await this.playwrightQueue.add(async () => {
         const browserTarget = this.selectPlaywrightTarget(modelId);
-        return await this.playwrightScraper.queryWithRetry(modelId, messages, browserTarget);
+        return await this.playwrightScraper.queryWithRetry(modelId, messages, browserTarget, { market: market.market });
       });
     } else {
       response = await this.apiQueue.add(async () => {
@@ -517,7 +646,14 @@ class AEOOrchestrator {
             tool_choice: ragEnabled ? (this.config.execution?.search_options?.tool_choice || 'auto') : 'none',
             allowed_domains: this.config.execution?.search_options?.allowed_domains || [],
             search_context_size: this.config.execution?.search_options?.search_context_size || 'medium',
-            geo: promptSession?.geo || this.config.execution?.geo?.default_country || undefined,
+            // Enterprise RAG layer: cap + templates ride along where the provider
+            // API supports them; every row records what was requested (analysis
+            // compares requested vs actually-retrieved — the invalidation vector).
+            max_search_queries: ragCfg.max_search_queries_per_prompt || undefined,
+            query_templates: ragCfg.query_templates || undefined,
+            source_priority: ragCfg.source_priority || undefined,
+            geo: market.country,
+            market: market.market,
             stream: false
           });
         });
@@ -555,7 +691,18 @@ class AEOOrchestrator {
       ...providerFanout.map((q) => (typeof q === 'string' ? { query: q, origin: 'provider_reported' } : q)),
       ...fanoutLocal,
     ];
-    extracted.geo = promptSession?.geo || this.config.execution?.geo?.default_country || 'us';
+    extracted.geo = market.country;
+    extracted.market = market.market;
+    extracted.snapshot = task.snapshot || promptSession?.snapshot || 'current';
+    extracted.location_code = response.location_code || null;
+    extracted.location_source = response.location_source || null;
+    extracted.geo_applied = {
+      market: market.market, country: market.country,
+      provider: provider.name,
+      retrieval_geo: ['anthropic', 'microsoft', 'google-serp', 'ai-mode'].includes(provider.name)
+        ? 'user_location/location_code sent'
+        : 'provider API exposes no retrieval-location control — market tag + Playwright locale/proxy carry geo'
+    };
 
     return extracted;
   }
@@ -624,11 +771,17 @@ class AEOOrchestrator {
 
   async saveResults(results, verificationSummary) {
     const outputPath = join(this.runDir, 'extracted_data', 'all_results.json');
+    // RAG capture gate: when the form disables hidden-query capture, provider-
+    // reported queries are stripped at persist time (privacy). Our own local
+    // fan-out decomposition is always kept and always labeled as such.
+    const captureHidden = this.sysInputs?.dynamic_search_context?.capture_hidden_queries !== false;
     const processedResults = results.map(r => ({
       executionId: r.executionId,
       promptSessionId: r.promptSession?.sessionId,
       personaId: r.promptSession?.personaId,
       modelId: r.modelId,
+      registryModelId: r.registryModelId || r.modelId,
+      snapshot: r.snapshot || r.result?.snapshot || r.promptSession?.snapshot || 'current',
       provider: r.provider?.name,
       turnIndex: r.turn?.turnIndex,
       turnType: r.turn?.turnType,
@@ -636,9 +789,14 @@ class AEOOrchestrator {
       ragEnabled: r.ragEnabled,
       volatilityRep: r.volatilityRep || 0,
       channel: r.usePlaywright ? 'web_ui' : 'api',
-      hidden_search_queries: r.result?.hidden_search_queries || [],
-      fanout_queries: r.result?.fanout_queries || [],
+      hidden_search_queries: captureHidden ? (r.result?.hidden_search_queries || []) : [],
+      fanout_queries: (r.result?.fanout_queries || []).filter((q) => captureHidden || q?.origin !== 'provider_reported'),
+      rag_capture: captureHidden ? 'on' : 'off (provider queries stripped at persist)',
       geo: r.result?.geo || r.promptSession?.geo || 'us',
+      market: r.result?.market || r.market || r.promptSession?.market || 'US',
+      location_code: r.result?.location_code || null,
+      location_source: r.result?.location_source || null,
+      geo_applied: r.result?.geo_applied || null,
       search_performed: r.result?.search_performed || false,
       search_requested: r.result?.search_requested ?? r.ragEnabled,
       ungrounded: r.result?.ungrounded || false,
@@ -786,6 +944,22 @@ async function main() {
   const modelsIndex = args.indexOf('--models');
   const models = modelsIndex !== -1 ? args[modelsIndex + 1]?.split(',') : undefined;
 
+  const scaleIndex = args.indexOf('--scale');
+  const scale = scaleIndex !== -1 ? args[scaleIndex + 1] : undefined;
+  if (scale && !PROMPT_SCALES[scale]) {
+    console.error(`Invalid --scale '${scale}'. Choose: ${Object.keys(PROMPT_SCALES).join(', ')}.`);
+    process.exit(1);
+  }
+
+  const shardIndex = args.indexOf('--shard');
+  const shard = shardIndex !== -1 ? args[shardIndex + 1] : undefined; // "2/5"
+  let shardNum, shardTotal;
+  if (shard) {
+    const m = String(shard).match(/^(\d+)\/(\d+)$/);
+    if (!m) { console.error('Invalid --shard. Use --shard 2/5 (index/total).'); process.exit(1); }
+    shardNum = parseInt(m[1], 10); shardTotal = parseInt(m[2], 10);
+  }
+
   const demoFlag = args.includes('--demo');
   if (demoFlag) {
     process.env.AEO_DEMO_MODE = '1';
@@ -796,7 +970,7 @@ async function main() {
 
   try {
     await orchestrator.initialize();
-    const result = await orchestrator.run({ promptCount, models });
+    const result = await orchestrator.run({ promptCount, models, scale, shard: shardNum, shards: shardTotal });
     console.log('\n=== AEO Simulation Run Complete ===');
     console.log(JSON.stringify(result.summary, null, 2));
   } catch (error) {

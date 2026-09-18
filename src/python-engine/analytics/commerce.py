@@ -254,7 +254,7 @@ class CommerceAnalyzer:
                 'est_carousel_lift_pts': round(share * weights.get(f, 0.5), 4),
                 'action': f'Backfill {f} for {miss.get(f, 0)} item(s) — see reports/commerce_fixes/merchant_feed_fix.csv.',
             }
-        sim['priority_order'] = sorted(sim['per_field'], key=lambda f: sim['per_field'][f]['est_carousel_lift_pts'], reverse=True)
+        sim['priority_order'] = sorted(sim['per_field'], key=lambda f: (-sim['per_field'][f]['est_carousel_lift_pts'], f))
         return sim
 
     def shopify_ucp_badge(self, ucp: Dict[str, Any]) -> Dict[str, Any]:

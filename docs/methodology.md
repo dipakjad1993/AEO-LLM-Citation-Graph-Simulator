@@ -73,3 +73,16 @@ Never collapse adapters into a single regex.
   `analytics/trend_store.py`), not JSON files.
 - Freshness windows enforced: ChatGPT/Perplexity ~30d, Claude ~quarter, AIO ~year.
   Stale money pages auto-raise Jira/Linear tickets (`scripts/refresh_tickets.py` output).
+
+## 8. Retrieval + temporal + savings honesty (2026 enterprise layer)
+
+- **RAG invalidation vectors**: the engine's hidden search queries are provider-reported
+  truth about what was retrieved. A hidden query that never surfaces in citations is a
+  reformulation failure (fix queries/domains, not copy). Families whose APIs expose no
+  query surface report an explicit adapter gap — never averaged away.
+- **Temporal drift**: paired snapshot rows isolate model re-index drift from site changes;
+  single-snapshot runs say `no_snapshot_data` instead of guessing.
+- **Savings**: agency math runs on MEASURED `cost_report.json` spend only; zero spend
+  yields `no_spend`, never a claimed multiple.
+- **Determinism**: funnel tie-breaks use canonical stage order so identical inputs yield
+  identical recommendations, every run.
