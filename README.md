@@ -58,6 +58,11 @@ Methodology detail: [`docs/methodology.md`](docs/methodology.md) (read before ch
 | B. Real tracking | `node setup.js` then `npm run full-run` | Validates each key live; enforces Python >=3.11; needs 1+ provider key |
 | C. Server UI/API | `AEO_AUTH_TOKEN=... node server.js` | `http://localhost:3000`, probe `/api/health` |
 | D. Docker | `docker compose up --build` | Sets `HOST=0.0.0.0` for you |
+| E. Static preview (Cloudflare Pages) | Framework preset None, empty build command, output dir = repo root | Landing + inputs shell only (no `/api/*` backend); shows a "Static preview" banner. Full runs need C/D |
+
+> Pages note: this repo is a Node + Python app, not a static site — Pages can only host the
+> dashboard shell (`_redirects` maps `/` to `src/dashboard/index.html`). Live analysis, uploads,
+> and results need the `server.js` backend (paths C/D) or the hosted demo above.
 
 Provider keys: OpenAI, Anthropic, Google, Perplexity, DeepSeek, xAI (`XAI_API_KEY`), SERP (`SERP_API_KEY` + `SERP_PROVIDER=serper|dataforseo|zenserp`).
 

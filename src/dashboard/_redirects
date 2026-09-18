@@ -1,0 +1,6 @@
+# Fallback for Pages projects whose Build output directory is src/dashboard.
+# index.html references its bundle as src/dashboard/sections.js (correct when the
+# publish dir is the repo root AND under `node server.js`, which serves
+# /src/dashboard/*). When publishing src/dashboard itself, rewrite it to /sections.js.
+# (If your output dir is the repo root, the root _redirects already covers "/".)
+/src/dashboard/sections.js /sections.js 200

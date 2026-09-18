@@ -285,6 +285,11 @@ textarea{min-height:64px;resize:vertical}
   <div class="status idle" id="top-status">Ready</div>
 </div>
 
+<div id="backend-offline" class="card" style="display:none;border-left:4px solid #e37400;margin:20px 24px 0">
+  <h2>Static preview &mdash; backend not connected</h2>
+  <p class="sub">This copy is served without the Node API backend (for example Cloudflare Pages static hosting), so runs, uploads and results are unavailable here. For the full tool run <b>node server.js</b> locally, deploy with Docker, or use the hosted demo. See the README Quickstart.</p>
+</div>
+
 <div class="main">
 
 <!-- ═══════════════ PAGE 1: INPUTS ═══════════════ -->
@@ -726,7 +731,16 @@ function toggleSection(header){
     },{once:true});
   }
 }
-async function api(ep,o={}){const r=await fetch(ep,{headers:{'Content-Type':'application/json'},...o});return r.json()}
+async function api(ep,o={}){const r=await fetch(ep,{headers:{'Content-Type':'application/json'},...o});const ct=r.headers.get('content-type')||'';if(!ct.includes('json'))throw new Error('API backend unreachable at '+ep+' (HTTP '+r.status+')');return r.json()}
+
+// Static hosts (e.g. Cloudflare Pages) serve this UI with no /api/* backend:
+// surface one clear banner instead of silent dead buttons + console errors.
+function showOffline(){
+  const b=document.getElementById('backend-offline');
+  if(b)b.style.display='block';
+  const st=document.getElementById('top-status');
+  if(st){st.textContent='Static preview';st.className='status idle';}
+}
 
 // ── Config form ──
 const competitors=[];
@@ -862,7 +876,9 @@ async function loadConfig(){
 
 async function saveConfig(runNow){
   const config=collectConfig();
-  const r=await api('/api/config',{method:'POST',body:JSON.stringify(config)});
+  let r;
+  try{r=await api('/api/config',{method:'POST',body:JSON.stringify(config)});}
+  catch(e){toast('Backend not connected — run node server.js for the full tool','er');showOffline();return}
   if(!r.success){toast(r.error||'Failed to save inputs','er');return}
   toast('System inputs saved','ok');
   if(runNow)startAnalysis();
@@ -871,9 +887,11 @@ async function saveConfig(runNow){
 // ── Uploads ──
 async function doUpload(section,file){
   const fd=new FormData();fd.append('file',file);
-  const r=await fetch('/api/upload/'+section,{method:'POST',body:fd});
-  const d=await r.json();
-  if(d.success){toast(file.name+' uploaded','ok');loadFiles()}else toast('Upload failed','er');
+  try{
+    const r=await fetch('/api/upload/'+section,{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.success){toast(file.name+' uploaded','ok');loadFiles()}else toast('Upload failed','er');
+  }catch(e){toast('Backend not connected — uploads need node server.js','er');showOffline()}
 }
 document.querySelectorAll('.dropzone').forEach(dz=>{
   const s=dz.dataset.s;const inp=dz.querySelector('input');
@@ -890,7 +908,7 @@ async function loadFiles(){
     el.innerHTML=(files||[]).map(f=>`<div class="fitem"><span class="nm">${f.name}</span><span class="sz">${(f.size/1024).toFixed(1)}KB</span><span class="del" onclick="delFile('${s}','${f.name}')">&times;</span></div>`).join('');
   }
 }
-async function delFile(s,n){await fetch('/api/upload/'+s+'/'+n,{method:'DELETE'});loadFiles()}
+async function delFile(s,n){try{await fetch('/api/upload/'+s+'/'+n,{method:'DELETE'});loadFiles()}catch(e){toast('Backend not connected','er');showOffline()}}
 
 // ── Analysis ──
 let pollId=null;
@@ -903,7 +921,16 @@ async function startAnalysis(){
   document.getElementById('top-status').className='status running';
   document.getElementById('top-status').textContent='Running';
 
-  const r=await api('/api/analyze',{method:'POST',body:'{}'});
+  const r=await api('/api/analyze',{method:'POST',body:'{}'}).catch(e=>{
+    document.getElementById('run-log').textContent+='Error: backend not connected. Run node server.js (or deploy Docker) for live analysis.\n';
+    document.getElementById('btn-analyze').disabled=false;
+    document.getElementById('run-progress').classList.add('hidden');
+    document.getElementById('top-status').className='status er';
+    document.getElementById('top-status').textContent='Offline';
+    toast('Backend not connected','er');showOffline();
+    return null;
+  });
+  if(!r)return;
   if(!r.success){
     document.getElementById('run-log').textContent+='Error: '+(r.error||'Unknown')+'\n';
     document.getElementById('btn-analyze').disabled=false;
@@ -920,7 +947,9 @@ async function startAnalysis(){
 function pollAnalysis(id){
   if(pollId)clearInterval(pollId);
   pollId=setInterval(async()=>{
-    const r=await api('/api/status?id='+id);
+    let r;
+    try{r=await api('/api/status?id='+id);}
+    catch(e){clearInterval(pollId);toast('Backend connection lost','er');showOffline();return}
     if(!r)return;
     const log=document.getElementById('run-log');
     const all=(r.output||'')+'\n'+(r.error||'');
@@ -1269,14 +1298,17 @@ async function loadRuns(){
   }).join('');
 }
 
-// ── Init ──
+// ── Init (backend-tolerant: static hosts serve this UI with no /api/*) ──
 (function(){
   const today=new Date().toISOString().slice(0,10);
-  document.getElementById('temporal-timestamp').value=today;
-  loadConfig();
-  loadFiles();
-  loadRuns();
-  loadResults();
+  const t=document.getElementById('temporal-timestamp');
+  if(t)t.value=today;
+  Promise.allSettled([loadConfig(),loadFiles(),loadRuns(),loadResults()]).then(rs=>{
+    // loadConfig() self-handles errors (resolves); the other three reject only
+    // when the backend is gone — that is the static-preview signal.
+    const [,files,runs,results]=rs;
+    if(files.status==='rejected'&&runs.status==='rejected'&&results.status==='rejected')showOffline();
+  });
 })();
 </script>
 </body>

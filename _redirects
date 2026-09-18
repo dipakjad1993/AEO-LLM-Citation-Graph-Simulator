@@ -1,0 +1,6 @@
+# Cloudflare Pages routing (static hosting has no Node backend).
+# The app UI lives at src/dashboard/index.html (served at "/" by `node server.js`).
+# This rewrite serves the same file at "/" on Pages so the site root returns 200,
+# with zero duplication. All other paths (sections.js, screenshots, /api/*) pass
+# through untouched. Requires Build output directory = repository root.
+/ /src/dashboard/index.html 200
