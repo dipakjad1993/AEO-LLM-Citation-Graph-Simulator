@@ -255,7 +255,7 @@ class SiteAuditor:
             neg.append("separate-thin-AI-page: thin /ai-* page risks near-duplicate — consolidate into the canonical page unless it serves a distinct task.")
         # llms.txt overweight guard
         if re.search(r"llms\.txt.*(30%|weight.*30|priority.*high)", body, re.I):
-            neg.append("llms.txt-overweight: keep llms.txt at 15% experimental — NOT a Google ranking factor (Illyes/Mueller). Ship MCP/UCP/ACP first.")
+            neg.append("llms.txt-overweight: llms.txt scores 0 — NOT a Google ranking factor (Google Dec-2025 + May-15-2026 Guide, Illyes/Mueller). Infra-only probe for coding agents. Ship MCP/UCP/ACP first.")
         out['checks']['negative_geo_myths'] = {'score': 100 if not neg else 40, 'flags': neg,
             'detail': 'Google-killed tactics: chunking, keyword density/long-tail stuffing, separate AI pages, llms.txt overweight, AI-rewrite.' if neg else 'No GEO-myth hacks detected.'}
         for n in neg:

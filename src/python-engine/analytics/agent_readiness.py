@@ -81,8 +81,13 @@ class AgentReadiness:
             if 'http' in llms: llms_score += 15; llms_notes.append('Contains canonical links.')
         else:
             llms_notes.append('No llms.txt — fine for Google (not a ranking factor), missed convenience for Claude/OpenAI agents.')
+        # Google May-15-2026 + Dec-2025 Search Central: llms.txt is NOT a Google
+        # ranking factor (Mueller: "no AI system currently uses llms.txt").
+        # Keep the probe as infra-only signal for coding agents (Claude/OpenAI
+        # agents convenience), score contribution = 0. NEVER add to total.
         checks['llms_txt'] = {'score': llms_score, 'present': bool(llms), 'llms_full': bool(llms_full), 'notes': llms_notes,
-                              'weight_note': 'Experimental. Score for agents only — do NOT sell as SEO.'}
+                              'weight': 0.0,
+                              'weight_note': 'NOT a Google ranking factor (Google Dec-2025 + May-15-2026 Guide). Infra-only probe for coding agents. Score contribution = 0 — excluded from total.'}
 
         # 2. MCP / WebMCP Tool Contract (+ UCP search_catalog, JSON-validated)
         mcp_paths = ['/.well-known/mcp.json', '/mcp.json', '/api/mcp', '/api/ucp/mcp']
@@ -119,8 +124,12 @@ class AgentReadiness:
         if 'application/ld+json' in home: basics += 33; basics_notes.append('JSON-LD present.')
         checks['machine_basics'] = {'score': basics, 'notes': basics_notes}
 
-        weights = {'llms_txt': 0.15, 'mcp_webmcp': 0.35, 'acp': 0.25, 'machine_basics': 0.25}
+        # 2026-09 fix: llms.txt weight = 0 (Google: NOT a ranking factor).
+        # Redistributed: MCP/WebMCP 0.40 + ACP 0.30 + basics 0.30 = 1.0.
+        weights = {'mcp_webmcp': 0.40, 'acp': 0.30, 'machine_basics': 0.30}
         total = round(sum(checks[k]['score'] * w for k, w in weights.items()), 1)
+        result['weights'] = {**weights, 'llms_txt': 0.0}
+        result['llms_txt_info_only'] = checks['llms_txt']
         result['checks'] = checks
         result['score'] = total
         result['verdict'] = ('Agent-ready' if total >= 75 else 'Partially agent-ready' if total >= 45 else 'Not agent-ready')

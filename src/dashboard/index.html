@@ -305,10 +305,15 @@ textarea{min-height:64px;resize:vertical}
     </div>
   </div>
 
-  <div class="section-label">1 &middot; Brand &amp; Competitive Set</div>
+  <div class="section-label">1 &middot; Brand &amp; Competitive Set (entity-resolved)</div>
   <div class="card">
-    <h2>Brand &amp; Competitors</h2>
-    <p class="sub">Who you are, who you are compared against, and the category you compete in.</p>
+    <h2>Brand &amp; Competitors <span class="pill p-green">Grounded-only</span></h2>
+    <p class="sub">Entity resolution prevents false matches (e.g. "Apple" the fruit). Aliases feed <code>config/entity_maps.json</code> via <code>brand_utils.build_brand_patterns()</code>. Evidence standard: <b>grounded-only, Wilson 95% CI, manifest-verified</b> — never "100% verified".</p>
+    <div class="bgrp" style="margin-bottom:12px">
+      <button class="btn btn-blue btn-sm" onclick="autoOnboard()">⚡ Auto-discover from domain</button>
+      <span style="font-size:.75em;color:var(--text2)">Sitemap → 20 money prompts + 5 heuristic competitors + snippet/schema/robots preflight (wraps <code>scripts/auto_onboard.py</code>)</span>
+    </div>
+    <div id="onboard-result" style="font-size:.78em"></div>
     <div class="cols3">
       <div class="fg">
         <label>Your Brand Name *</label>
@@ -317,17 +322,27 @@ textarea{min-height:64px;resize:vertical}
         <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
       <div class="fg">
-        <label>Brand Website</label>
-        <input type="url" id="inp-website" placeholder="https://acme.com">
+        <label>Brand Website *</label>
+        <input type="url" id="inp-website" placeholder="https://yourbrand.com">
         <div class="hint-note" style="display:none"><b>Where to find:</b> Your homepage URL. Used to verify crawler access (robots.txt) and build ground-truth citations. <span class="tool">Tool:</span> just your site URL; test it with <span class="tool">site:yourdomain.com</span> in Google.</div>
         <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
       <div class="fg">
-        <label>Product Category</label>
+        <label>Product Category + Intent</label>
         <input type="text" id="inp-category" placeholder="e.g. cloud security">
         <div class="hint-note" style="display:none"><b>Where to find:</b> The market/category term buyers actually use. <span class="tool">Tools:</span> <b>Google Autocomplete</b>, <b>AlsoAsked.com</b>, <b>AnswerThePublic</b> to see the exact phrasing buyers type.</div>
         <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
+    </div>
+    <div class="cols3">
+      <div class="fg"><label>Brand Wikidata URL (entity ID)</label><input type="url" id="inp-wikidata" placeholder="https://www.wikidata.org/wiki/Q…"><div class="hint-note">Entity resolution: without a QID / KG MID, regex SoMV can count homonyms. Optional but recommended for enterprise.</div></div>
+      <div class="fg"><label>Google KG MID (optional)</label><input type="text" id="inp-kgmid" placeholder="e.g. /m/0…"><div class="hint-note">From <span class="tool">knowledgegraphsearch.com</span>. Pins the Knowledge Graph entity.</div></div>
+      <div class="fg"><label>Industry vertical (YMYL flag)</label><select id="inp-vertical"><option value="">Select…</option><option>Finance / YMYL</option><option>Health / YMYL</option><option>Legal / YMYL</option><option>B2B SaaS</option><option>E-commerce / Retail</option><option>Travel / Local</option><option>Other</option></select><div class="hint-note">YMYL → named author + bio required (Presenc 2026: +60% citations).</div></div>
+    </div>
+    <div class="cols3">
+      <div class="fg"><label>Aliases (comma-separated, prefilled from entity_maps)</label><input type="text" id="inp-aliases" placeholder="e.g. Acme, Acme Inc"></div>
+      <div class="fg"><label>Language / Locale</label><select id="inp-locale"><option value="en-US">en-US</option><option value="en-GB">en-GB</option><option value="de-DE">de-DE</option><option value="fr-FR">fr-FR</option><option value="es-ES">es-ES</option></select></div>
+      <div class="fg"><label>Search intent</label><select id="inp-intent"><option value="commercial">Commercial (SoMV = purchase shortlist)</option><option value="informational">Informational</option><option value="local">Local (GBP-weighted)</option></select><div class="hint-note">SoMV differs by intent — commercial uses money prompts; local adds GBP checklist.</div></div>
     </div>
     <div class="fg">
       <label>Competitors</label>
@@ -341,58 +356,73 @@ textarea{min-height:64px;resize:vertical}
     </div>
   </div>
 
-  <div class="section-label">2 &middot; Dynamic Search-Informed Context (RAG Invalidation Vectors)</div>
+  <div class="section-label">2 &middot; Query Fan-Out &amp; Reformulation Lab (Observed + Simulated)</div>
   <div class="card">
-    <h2>Capture the Search Queries Behind Every Answer <span class="pill p-blue">New</span></h2>
-    <p class="sub">Search-augmented LLMs reformulate your buyer's question into hidden web-search queries before answering. Log those dynamic queries to expose <em>why</em> the model fetched the wrong (or right) sources.</p>
+    <h2>Query Fan-Out &amp; Reformulation Lab <span class="pill p-blue">Observed + Simulated</span></h2>
+    <p class="sub">Honest labeling (2026): via APIs you <b>cannot</b> see true hidden model-generated queries — you only get <code>annotations[]</code> + tool traces you requested. True Google fan-out is server-side. <b>Observed</b> = tool traces. <b>Simulated</b> = your templates executed via SERP API (<code>/api/fanout</code> shows cited-domains per reformulation).</p>
     <div class="toggle-row">
       <div>
-        <div class="tlabel">Enable Dynamic Search Capture</div>
-        <div class="tdesc">Log the LLM-generated search queries executed behind the scenes during retrieval</div>
+        <div class="tlabel">Enable Fan-Out Lab</div>
+        <div class="tdesc">Log observed tool traces + run simulated reformulations</div>
       </div>
       <label class="switch"><input type="checkbox" id="rag-enabled" checked><span class="slider"></span></label>
     </div>
     <div class="toggle-row">
       <div>
-        <div class="tlabel">Capture Hidden / Model-Generated Queries</div>
-        <div class="tdesc">Store every internal query reformulation alongside the response</div>
+        <div class="tlabel">Capture Hidden / Model-Generated Queries (observed traces only)</div>
+        <div class="tdesc">Stores tool-call reformulations alongside the response — not true server-side fan-out</div>
       </div>
       <label class="switch"><input type="checkbox" id="rag-capture-hidden" checked><span class="slider"></span></label>
     </div>
+    <div id="deepseek-warn" class="hint-note" style="display:none;border-color:#f6c8c6;background:#fce8e6">⚠️ Provider DeepSeek = memory baseline only — no hidden queries exist (no browsing). This toggle has no effect for DeepSeek rows.</div>
     <div id="rag-fields">
-      <div class="cols2" style="margin-top:12px">
+      <div class="cols3" style="margin-top:12px">
+        <div class="fg">
+          <label>Mode</label>
+          <select id="rag-mode"><option value="both">Observed + Simulated (recommended)</option><option value="observed">Observed traces only</option><option value="simulated">Simulated via SERP API</option></select>
+        </div>
+        <div class="fg">
+          <label>SERP provider (simulated leg)</label>
+          <select id="rag-serp-provider"><option value="serper">Serper</option><option value="dataforseo">DataForSEO (+location_code)</option><option value="zenserp">Zenserp</option></select>
+        </div>
+        <div class="fg">
+          <label>Fan-out depth (1–5)</label>
+          <input type="number" id="rag-fanout-depth" min="1" max="5" value="3">
+        </div>
+      </div>
+      <div class="cols3" style="margin-top:4px">
         <div class="fg">
           <label>Max Search Queries per Prompt</label>
           <input type="number" id="rag-max-queries" min="1" max="10" value="3">
-          <div class="hint-note" style="display:none"><b>What this does:</b> How many hidden web-search queries the LLM may generate per buyer question. <span class="tool">Tip:</span> leave at 3 — more queries = more sources captured but higher API cost.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
         </div>
         <div class="fg">
-          <label>Retrieval Source Priority</label>
-          <select id="rag-source-priority">
-            <option value="auto">Auto (LLM chooses)</option>
-            <option value="google">Prefer Google-indexed sources</option>
-            <option value="bing">Prefer Bing-indexed sources</option>
-            <option value="specialized">Prefer specialized (Reddit, docs, news)</option>
-          </select>
-          <div class="hint-note" style="display:none"><b>What this does:</b> Which index the retrieval layer should favor. <span class="tool">Note:</span> ChatGPT uses Bing internally; Perplexity and Gemini mix multiple indexes. Auto is safest.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+          <label>Allowed domains (maps to OpenAI allowed_domains)</label>
+          <input type="text" id="rag-allowed" placeholder="e.g. yourbrand.com, docs.yourbrand.com">
+        </div>
+        <div class="fg">
+          <label>Blocklist + Date restrict</label>
+          <div class="row"><input type="text" id="rag-blocked" placeholder="Blocklist domains"><select id="rag-date" style="max-width:130px"><option value="">Any time</option><option value="month">Past month (freshness)</option><option value="year">Past year (AIO window)</option></select></div>
         </div>
       </div>
       <div class="fg">
-        <label>RAG Invalidation Vector Templates (one per line)</label>
+        <label>Location passthrough (SERP location_code)</label>
+        <input type="text" id="rag-location" placeholder="e.g. 1023191 (US-NY) — see Geo layer matrix">
+        <div class="hint-note">Simulated reformulations inherit the Geo layer <code>location_code</code> per row. Cost: SERP calls billed per reformulation × depth.</div>
+      </div>
+      <div class="fg">
+        <label>Reformulation Templates (one per line, {brand} {category})</label>
         <textarea id="rag-templates" rows="3" placeholder="One query template per line. Use {brand} and {category} placeholders.
 Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
-        <div class="hint-note" style="display:none"><b>What this does:</b> The query patterns the LLM reformulates before searching. <span class="tool">Tool:</span> generate realistic ones with <b>AlsoAsked.com</b> (real "People Also Ask" queries) or ask ChatGPT "what queries would a {category} buyer search?". Use {brand} and {category} placeholders.</div>
+        <div class="hint-note" style="display:none"><b>What this does:</b> Simulated fan-out queries executed via SERP API. <span class="tool">Tool:</span> <b>AlsoAsked.com</b> / PAA. Results join in <code>/api/fanout</code> cited-domains table.</div>
         <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
     </div>
   </div>
 
-  <div class="section-label">3 &middot; Temporal Grounding &amp; Model Freshness Indexing</div>
+  <div class="section-label">3 &middot; Temporal Grounding &amp; Model Freshness (live registry)</div>
   <div class="card">
-    <h2>Ground Answers to a Content-Freshness Timestamp <span class="pill p-blue">New</span></h2>
-    <p class="sub">LLM responses drift across model update cycles and index re-crawls. Pin a freshness timestamp and run identical prompts against historical model snapshots to isolate whether a SoMV shift came from <em>your site</em> or the <em>model re-indexing</em>.</p>
+    <h2>Ground Answers to a Content-Freshness Timestamp <span class="pill p-blue">Registry-guarded</span></h2>
+    <p class="sub">Snapshots come from the live <code>/api/models</code> registry (v2026.09). Deprecated IDs (e.g. <code>gpt-4o-2024-*</code>, shutdown 2026-07-23) are <b>refused</b> by <code>migrate:check</code>. If baseline vs current SoMV shifts &gt;15% with no site change → labeled <b>"model re-indexing, not your site"</b> (<code>volatility.py</code>).</p>
     <div class="toggle-row">
       <div>
         <div class="tlabel">Enable Temporal Grounding</div>
@@ -404,141 +434,104 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
       <div class="cols3" style="margin-top:12px">
         <div class="fg">
           <label>Content Freshness Timestamp</label>
-          <input type="date" id="temporal-timestamp">
-          <div class="hint-note" style="display:none"><b>Where to find:</b> Today's date or your last site-wide content refresh date. <span class="tool">Tool:</span> check your CMS "last modified" report (WordPress: <span class="tool">WP last updated</span> column, or run a sitemap crawl with <span class="tool">Screaming Frog</span> and sort by <code>lastmod</code>).</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+          <div class="row"><input type="date" id="temporal-timestamp"><button class="btn btn-outline btn-sm" onclick="autofillLastmod()" title="Pull newest sitemap lastmod">Use sitemap lastmod</button></div>
         </div>
         <div class="fg">
-          <label>Baseline Model Snapshot</label>
-          <input type="text" id="temporal-snap-a" placeholder="e.g. gpt-4o-2024-05-13">
-          <div class="hint-note" style="display:none"><b>Where to find:</b> The exact model + snapshot ID. <span class="tool">Tools:</span> <b>OpenAI</b> model docs (<span class="tool">platform.openai.com/docs/models</span>), <b>Anthropic</b> release notes, <b>Google</b> Gemini version history, <b>LMSYS Chatbot Arena</b> leaderboard for naming. Format: <code>model-snapshotdate</code>.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+          <label>Baseline Model (registry)</label>
+          <select id="temporal-snap-a"><option value="">Loading registry…</option></select>
         </div>
         <div class="fg">
-          <label>Current Model Snapshot</label>
-          <input type="text" id="temporal-snap-b" placeholder="e.g. gpt-4o-2024-08-06">
-          <div class="hint-note" style="display:none"><b>Where to find:</b> The current live snapshot of the same model. <span class="tool">Tool:</span> same docs as above — compare old vs new snapshot to isolate "model re-index drift" from "your site change".</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+          <label>Current Model (registry)</label>
+          <select id="temporal-snap-b"><option value="">Loading registry…</option></select>
         </div>
       </div>
-      <div class="fg">
-        <label>Run Identical Prompts Across Snapshots</label>
-        <select id="temporal-compare-mode">
-          <option value="paired">Paired A/B (same prompts, both snapshots)</option>
-          <option value="freshness_only">Freshness timestamp only</option>
-        </select>
-        <div class="hint-note" style="display:none"><b>What this does:</b> Paired A/B runs the same buyer prompt against both snapshots so you can attribute a SoMV delta to the model's re-index instead of your content. <span class="tool">Tip:</span> use Paired A/B for the 20 highest-value prompts.</div>
-        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+      <div class="cols3">
+        <div class="fg"><label>Freshness window (auto-mapped)</label><select id="temporal-window"><option value="30d">30 days — ChatGPT / Perplexity</option><option value="quarter">Quarter — Claude</option><option value="year">Year — AI Overviews</option></select><div class="hint-note">Drives <code>dateModified</code> check + FactCheck loop (7.9% benchmark) + auto-tickets.</div></div>
+        <div class="fg"><label>Run Identical Prompts Across Snapshots</label><select id="temporal-compare-mode"><option value="paired">Paired A/B (same prompts, both snapshots) — 2× cost</option><option value="freshness_only">Freshness timestamp only</option></select><div class="hint-note">Paired A/B shows Wilson-overlap warning when CIs overlap (no significant drift).</div></div>
+        <div class="fg"><label>dateModified check</label><select id="temporal-datemod"><option value="on">ON — fail pages outside window</option><option value="off">OFF</option></select></div>
       </div>
+      <div id="drift-helper" class="hint-note">Model-drift helper: after a run, SoMV delta &gt;15% with unchanged site = model re-indexing. See Volatility tab.</div>
     </div>
   </div>
 
-  <div class="section-label">4 &middot; Geographic Proxy &amp; Localization Injection</div>
+  <div class="section-label">4 &middot; Geographic Localization (location_code matrix, no browser secrets)</div>
   <div class="card">
-    <h2>Simulate Real Enterprise Buyer Locations <span class="pill p-blue">New</span></h2>
-    <p class="sub">A CISO in London gets different citations than one in Austin. Rotate residential proxies across hyper-specific enterprise markets so retrieval results match the buyer's actual geography.</p>
+    <h2>Enterprise Buyer Locations <span class="pill p-green">Cost-flat geo</span></h2>
+    <p class="sub">2026 truth: localization = <code>location_code</code> + language + GBP/<code>LocalBusiness</code>, not just IP. Proxy credentials live in <b>server env</b> (<code>PROXY_URL</code> / <code>AEO_PROXY_&lt;MARKET&gt;</code>) — <b>never</b> in the browser or <code>system_inputs.json</code>. UI only selects markets. <span id="proxy-env-status" class="pill p-yellow">Proxy env: checking…</span></p>
     <div class="toggle-row">
       <div>
         <div class="tlabel">Enable Geographic Localization</div>
-        <div class="tdesc">Route queries through market-specific proxy points</div>
+        <div class="tdesc">Tag each session with location_code + language (cost-flat budget split)</div>
       </div>
       <label class="switch"><input type="checkbox" id="geo-enabled" checked><span class="slider"></span></label>
     </div>
     <div id="geo-fields">
       <div class="fg" style="margin-top:12px">
-        <label>Target Enterprise Markets</label>
+        <label>Target Enterprise Markets (DataForSEO location_code)</label>
         <div class="chips">
-          <button class="chip zone active" data-market="US-NY">US-NY (New York)</button>
-          <button class="chip zone" data-market="US-SFO">US-SFO (SF Bay)</button>
-          <button class="chip zone active" data-market="UK-LND">UK-LND (London)</button>
-          <button class="chip zone" data-market="EU-FRA">EU-FRA (Frankfurt)</button>
-          <button class="chip zone active" data-market="APAC-SGP">APAC-SGP (Singapore)</button>
-          <button class="chip zone" data-market="APAC-SYD">APAC-SYD (Sydney)</button>
-          <button class="chip zone" data-market="ME-DXB">ME-DXB (Dubai)</button>
+          <button class="chip zone active" data-market="US-NY" title="location_code 1023191">US-NY (New York · 1023191)</button>
+          <button class="chip zone" data-market="US-SFO" title="location_code 1020877">US-SFO (SF Bay · 1020877)</button>
+          <button class="chip zone active" data-market="UK-LND" title="location_code 1006886">UK-LND (London · 1006886)</button>
+          <button class="chip zone" data-market="EU-FRA" title="location_code 1021793">EU-FRA (Frankfurt · 1021793)</button>
+          <button class="chip zone active" data-market="APAC-SGP" title="location_code 1062556">APAC-SGP (Singapore · 1062556)</button>
+          <button class="chip zone" data-market="APAC-SYD" title="location_code 1040836">APAC-SYD (Sydney · 1040836)</button>
+          <button class="chip zone" data-market="ME-DXB" title="location_code 1023968">ME-DXB (Dubai · 1023968)</button>
         </div>
-        <div class="hint-note" style="display:none"><b>Where to find:</b> Pick the markets where you actually sell to enterprise buyers. <span class="tool">Tools:</span> pull from your CRM (Salesforce/HubSpot) "account by region" report, or <b>GA4</b> (Admin → Audience → Location) to see where high-value sessions originate.</div>
-        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+        <div class="hint-note">Unknown metros fall back to country code and log <code>location_source</code> per row. GDPR: residential proxies in EU need procurement sign-off — prefer SERP <code>location_code</code> for EU.</div>
       </div>
       <div class="cols3" style="margin-top:12px">
-        <div class="fg">
-          <label>Proxy Provider</label>
-          <select id="geo-proxy-type">
-            <option value="residential">Residential Proxy</option>
-            <option value="isp">ISP Proxy</option>
-            <option value="datacenter">Datacenter Proxy</option>
-          </select>
-          <div class="hint-note" style="display:none"><b>What this does:</b> Residential/ISP proxies look like real consumers (datacenter IPs get filtered by Google/bot-detection). <span class="tool">Providers:</span> <b>Bright Data</b>, <b>Oxylabs</b>, <b>Smartproxy</b>, <b>IPRoyal</b>. Residential is required for realistic geo-localized retrieval.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-        </div>
-        <div class="fg">
-          <label>Proxy Server / Endpoint</label>
-          <input type="text" id="geo-proxy-server" placeholder="residential-proxy.example.com:24000">
-          <div class="hint-note" style="display:none"><b>Where to find:</b> From your proxy dashboard's "Proxy Access" page. Format: <code>host:port</code>. <span class="tool">Example:</span> Bright Data shows <code>brd.superproxy.io:22225</code>. Leave the port so the orchestrator can rotate IPs.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-        </div>
-        <div class="fg">
-          <label>Rotation Interval (min)</label>
-          <input type="number" id="geo-rotation" min="1" max="1440" value="5">
-          <div class="hint-note" style="display:none"><b>What this does:</b> How often to request a new IP from the proxy pool. <span class="tool">Tip:</span> 5 min for normal runs; use 1-2 min for large batches to avoid rate limits. Rotating per-market gives each market a clean IP.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-        </div>
+        <div class="fg"><label>Budget split (cost-flat sharding)</label><select id="geo-budget-split"><option value="pilot">Pilot — 500 sessions</option><option value="standard">Standard — 2000 sessions</option><option value="enterprise">Enterprise — 5000 sessions sharded</option></select><div class="hint-note">Prompt budget is SPLIT across markets (Peec pattern) — geo does not multiply cost.</div></div>
+        <div class="fg"><label>EU vs US split view</label><select id="geo-eu-us"><option value="on">ON — separate EU/US leaders</option><option value="off">OFF</option></select></div>
+        <div class="fg"><label>Per-locale GBP / LocalBusiness checklist</label><select id="geo-gbp"><option value="on">ON</option><option value="off">OFF</option></select><div class="hint-note">Local intent requires Merchant Center feed + per-locale GBP check.</div></div>
       </div>
-      <div class="cols2" style="margin-top:4px">
-        <div class="fg">
-          <label>Proxy Username</label>
-          <input type="text" id="geo-proxy-user" placeholder="username">
-          <div class="hint-note" style="display:none"><b>Where to find:</b> Username from your proxy dashboard — often includes country/region session params, e.g. <code>lum-customer-ACME-zone-resi-country-us</code>. <span class="tool">Provider:</span> Bright Data / Oxylabs / Smartproxy dashboards.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-        </div>
-        <div class="fg">
-          <label>Proxy Password</label>
-          <input type="password" id="geo-proxy-pass" placeholder="••••••••">
-          <div class="hint-note" style="display:none"><b>Security note:</b> Stored only in your local <code>data/system_inputs.json</code> (never sent to any third party). <span class="tool">Tool:</span> your proxy provider's password/key.</div>
-          <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-        </div>
-      </div>
+      <div class="hint-note" style="border-color:#b7dfc3;background:#e6f4ea">🔒 Proxy creds are <b>not collected here</b>. Set <code>PROXY_URL</code> (or <code>AEO_PROXY_US_NY</code> …) in server <code>.env</code>. Status: <span id="proxy-env-status-2">checked via /api/security</span>. Rotation is server-side (5 min default).</div>
     </div>
   </div>
 
-  <div class="section-label">5 &middot; LLM Providers &amp; Execution</div>
+  <div class="section-label">5 &middot; LLM Providers &amp; Execution (budget-gated)</div>
   <div class="card">
-    <h2>Execution Parameters</h2>
-    <p class="sub">Model selection happens via API keys in <code>.env</code>. Control concurrency, budget, and query volume here.</p>
+    <h2>Execution Parameters <span class="pill p-green">$500 hard gate</span></h2>
+    <p class="sub">Live engine matrix from <code>/api/health</code> + <code>/api/security</code> (green = key present). Total = prompts × engines × modes + SERP fan-out. Pre-flight refuses over-budget runs.</p>
+    <div id="engine-matrix" class="hint-note">Loading live engine matrix…</div>
+    <div id="budget-preview" class="hint-note" style="border-color:#aecbfa;background:#e8f0fe;font-weight:600">Budget preview: —</div>
     <div class="cols3">
+      <div class="fg">
+        <label>Scale (sharded sessions)</label>
+        <select id="exec-scale"><option value="pilot">Pilot — 50 prompts</option><option value="standard">Standard — 500 prompts</option><option value="enterprise">Enterprise — 5000 sharded (--shard 1/4)</option></select>
+        <div class="hint-note">Enterprise = <code>--scale enterprise --shard 1/4</code> (PROMPT_SCALES + shardSessions in marketGeo.js).</div>
+      </div>
       <div class="fg">
         <label>Prompt Count</label>
         <input type="number" id="exec-prompt-count" min="1" max="10000" value="50">
-        <div class="hint-note" style="display:none"><b>What this does:</b> How many buyer queries to run per model. <span class="tool">Tip:</span> 50 is statistically meaningful for SoMV; use 200+ for enterprise-level confidence (95% CI ±4%). Cost scales linearly.</div>
-        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
       <div class="fg">
         <label>Max Concurrent Requests</label>
         <input type="number" id="exec-concurrency" min="1" max="100" value="10">
-        <div class="hint-note" style="display:none"><b>What this does:</b> Parallel API calls. <span class="tool">Tip:</span> 10 is safe for most providers. Check your provider rate limits (OpenAI: <span class="tool">platform.openai.com/usage</span>; Anthropic: <span class="tool">console.anthropic.com</span>). Too high = 429 errors.</div>
-        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
-      </div>
-      <div class="fg">
-        <label>Temperature</label>
-        <input type="number" id="exec-temp" min="0" max="1" step="0.05" value="0.15">
-        <div class="hint-note" style="display:none"><b>What this does:</b> Sampling randomness. <span class="tool">Tip:</span> keep ≤0.2 for deterministic enterprise retrieval; raise to 0.7 only for persona-creativity prompts. Lower = more reproducible SoMV.</div>
-        <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
       </div>
     </div>
-    <div class="toggle-row">
-      <div>
-        <div class="tlabel">Enable RAG / Web-Search Mode</div>
-        <div class="tdesc">Dual-query attribution runs prompts with web search ON and OFF to split RAG vs base-weight influence</div>
-      </div>
-      <label class="switch"><input type="checkbox" id="exec-rag" checked><span class="slider"></span></label>
+    <div class="cols3">
+      <div class="fg"><label>Temperature (determinism ≤0.2)</label><input type="number" id="exec-temp" min="0" max="1" step="0.05" value="0.15"></div>
+      <div class="fg"><label>Seed (OpenAI supports_seed)</label><input type="number" id="exec-seed" placeholder="e.g. 42 (empty = random)"></div>
+      <div class="fg"><label>Top_p (locked) / max_calls_per_run</label><input type="text" value="top_p 0.9 · max 2500" disabled></div>
     </div>
-    <div class="hint-note" style="margin-top:8px;display:none"><b>What this does:</b> "ON" = the LLM searches the live web (captures real citations); "OFF" = base training-weight answer (captures pre-search brand memory). Running both lets the tool separate <em>retrieval-sourced</em> vs <em>memory-sourced</em> brand mentions. <span class="tool">Tip:</span> leave ON for the full analysis.</div>
-    <button class="hint-toggle" onclick="toggleHint(this)">? How to fill this</button>
+    <div class="fg"><label>Grounding mode (replaces single RAG checkbox)</label><select id="exec-rag-mode"><option value="grounded">Grounded ONLY (default, honest)</option><option value="memory">Memory baseline twin (DeepSeek, no browse)</option><option value="dual">Dual — RAG vs base-weight split (2× cost, search_contaminated_baseline flag)</option></select>
+    <div class="hint-note">Dual runs each prompt twice (ON + OFF) to split retrieval vs memory attribution. DeepSeek rows are memory-only by construction.</div></div>
+    <div class="toggle-row" style="display:none"><label class="switch"><input type="checkbox" id="exec-rag" checked><span class="slider"></span></label></div>
   </div>
 
-  <div class="section-label">6 &middot; Data Files &amp; Uploads</div>
+  <div class="section-label">6 &middot; Revenue Truth First (GSC / GA4 / Bing) + Data Files</div>
   <div class="card">
-    <h2>Upload Your Data</h2>
-    <p class="sub">Optional uploads enrich the analysis. No uploads &rarr; auto-generated prompts and built-in config are used.</p>
+    <h2>Revenue Truth + Uploads <span class="pill p-purple">CEO line first</span></h2>
+    <p class="sub">AI-referrer revenue share, assisted conversions, Otterly-style gap note — computed by <code>import_traffic.py --gsc --ga4 --bing</code> + <code>gsc_genai_pull.py --audit-controls</code>. Drop CSVs here or <button class="btn btn-outline btn-sm" onclick="pullGoogleTruth()">Pull live via OAuth (/api/google-truth)</button>. Large files &gt;25MB → CLI streams (no cap). Retention: <span id="retention-note">raw 365d · trends indefinite · audit 730d · PII redacted (<code>/api/admin/retention</code>, <code>docs/retention.md</code>)</span>.</p>
+    <div class="cols3" style="margin-bottom:12px">
+      <div><div class="dropzone" data-s="traffic"><div class="ttl" style="font-weight:700;color:var(--green)">GSC Generative AI CSV</div><div class="hint">page/country/device/date + Web Performance side-by-side</div><input type="file" accept=".csv,.json" multiple></div><div class="files" id="fl-traffic"></div><div class="hint-note">Or CLI: <code>python scripts/gsc_genai_pull.py --audit-controls https://YOUR-SITE/</code>. <a href="#" onclick="dlTemplate('gsc');return false">Sample template</a> · schema: <code>config/schema.json</code>.</div></div>
+      <div><div class="dropzone" data-s="traffic"><div class="ttl" style="font-weight:700;color:var(--blue)">GA4 AI-source CSV</div><div class="hint">source/sessions/conversions/revenue (11 AI surfaces UTM)</div><input type="file" accept=".csv,.json" multiple></div><div class="hint-note">UTM auto-tagging: <code>scripts/attribution_enhanced.py</code>. <a href="#" onclick="dlTemplate('ga4');return false">Sample template</a>.</div></div>
+      <div><div class="dropzone" data-s="traffic"><div class="ttl" style="font-weight:700;color:var(--purple)">Bing AI Performance CSV</div><div class="hint">Bing generative-inclusion gate + Google-Extended audit</div><input type="file" accept=".csv,.json" multiple></div><div class="hint-note">Shows generative-inclusion gate + Extended-separation result inline after pull.</div></div>
+    </div>
+    <div class="fg"><label>Run picker — diff vs previous (trend_store)</label><div class="row"><select id="run-picker"><option value="">Latest run (default)</option></select><button class="btn btn-outline btn-sm" onclick="loadRuns()">↻ Runs</button><button class="btn btn-outline btn-sm" onclick="diffRuns()">Diff vs previous</button></div><div id="run-spark" style="font-size:.75em;color:var(--text2)">90-day SoMV sparkline renders here from <code>/api/trends?days=90</code>.</div></div>
+    <div id="google-truth-inline" style="font-size:.78em"></div>
+    <h2 style="margin-top:14px">Analysis Inputs</h2>
+    <p class="sub">Optional uploads enrich the analysis. No uploads → auto-generated prompts. Validation errors show inline (validateAllConfigs).</p>
     <div class="cols2">
       <div>
         <div class="dropzone" id="dz-prompts" data-s="prompts">
@@ -647,8 +640,14 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
         <nav class="results-nav" id="results-nav" style="flex:1">
           <a href="#res-exec-summary" data-section="res-exec-summary"><span class="nav-num">1</span>Executive Summary</a>
           <a href="#res-cmo-dashboard" data-section="res-cmo-dashboard"><span class="nav-num">★</span>CMO Dashboard</a>
-          <a href="#res-attribution" data-section="res-attribution"><span class="nav-num">2</span>Attribution</a>
+          <a href="#res-trends" data-section="res-trends"><span class="nav-num">↗</span>Trends 90d</a>
+          <a href="#res-surfaces" data-section="res-surfaces"><span class="nav-num">◈</span>Surfaces (hero)</a>
+          <a href="#res-google-truth" data-section="res-google-truth"><span class="nav-num">$</span>Revenue Truth</a>
           <a href="#res-somv" data-section="res-somv"><span class="nav-num">3</span>SoMV</a>
+          <a href="#res-volumes" data-section="res-volumes"><span class="nav-num">V</span>Prompt Volumes</a>
+          <a href="#res-graveyard" data-section="res-graveyard"><span class="nav-num">🪦</span>Graveyard</a>
+          <a href="#res-thirdparty" data-section="res-thirdparty"><span class="nav-num">◉</span>Third-Party</a>
+          <a href="#res-attribution" data-section="res-attribution"><span class="nav-num">2</span>Attribution</a>
           <a href="#res-triples" data-section="res-triples"><span class="nav-num">4</span>Triple Extraction</a>
           <a href="#res-graphs" data-section="res-graphs"><span class="nav-num">5</span>Citation Graphs</a>
           <a href="#res-embeddings" data-section="res-embeddings"><span class="nav-num">6</span>Embeddings</a>
@@ -656,11 +655,10 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
           <a href="#res-biases" data-section="res-biases"><span class="nav-num">8</span>Biases</a>
           <a href="#res-recommendations" data-section="res-recommendations"><span class="nav-num">9</span>Recommendations</a>
           <a href="#res-enterprise" data-section="res-enterprise"><span class="nav-num">10</span>Enterprise Intelligence</a>
-          <a href="#res-google-truth" data-section="res-google-truth"><span class="nav-num">G</span>Google Truth</a>
-          <a href="#res-surfaces" data-section="res-surfaces"><span class="nav-num">◈</span>Surfaces</a>
           <a href="#res-fanout" data-section="res-fanout"><span class="nav-num">⑂</span>Fan-outs</a>
           <a href="#res-ace" data-section="res-ace"><span class="nav-num">◎</span>ACE Predict</a>
           <a href="#res-crawl" data-section="res-crawl"><span class="nav-num">🤖</span>Crawl Truth</a>
+          <a href="#res-commerce" data-section="res-commerce"><span class="nav-num">🛒</span>Commerce+Local</a>
           <a href="#res-charts" data-section="res-charts"><span class="nav-num">*</span>Charts</a>
           <a href="#res-strategic-summary" data-section="res-strategic-summary"><span class="nav-num">S</span>Strategy</a>
         </nav>
@@ -674,8 +672,14 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
     <div id="res-exec-summary" class="hidden"></div>
     <div id="data-quality-banner" class="hidden"></div>
     <div id="res-cmo-dashboard" class="hidden"></div>
-    <div id="res-attribution" class="hidden"></div>
+    <div id="res-trends" class="hidden"></div>
+    <div id="res-surfaces" class="hidden"></div>
+    <div id="res-google-truth" class="hidden"></div>
     <div id="res-somv" class="hidden"></div>
+    <div id="res-volumes" class="hidden"></div>
+    <div id="res-graveyard" class="hidden"></div>
+    <div id="res-thirdparty" class="hidden"></div>
+    <div id="res-attribution" class="hidden"></div>
     <div id="res-triples" class="hidden"></div>
     <div id="res-graphs" class="hidden"></div>
     <div id="res-embeddings" class="hidden"></div>
@@ -683,11 +687,10 @@ Example: &quot;latest {category} solutions for enterprise&quot;"></textarea>
     <div id="res-biases" class="hidden"></div>
     <div id="res-recommendations" class="hidden"></div>
     <div id="res-enterprise" class="hidden"></div>
-    <div id="res-google-truth" class="hidden"></div>
-    <div id="res-surfaces" class="hidden"></div>
     <div id="res-fanout" class="hidden"></div>
     <div id="res-ace" class="hidden"></div>
     <div id="res-crawl" class="hidden"></div>
+    <div id="res-commerce" class="hidden"></div>
     <div id="res-charts" class="hidden"></div>
     <div id="res-strategic-summary" class="hidden"></div>
   </div>
@@ -815,45 +818,133 @@ document.querySelectorAll('.chip').forEach(ch=>{
 
 function collectConfig(){
   const markets=[...document.querySelectorAll('.chip.zone.active')].map(c=>c.dataset.market);
+  const seedRaw=(document.getElementById('exec-seed')||{}).value;
   const config={
     brand:{
       primary_name:document.getElementById('inp-brand').value.trim(),
       website:document.getElementById('inp-website').value.trim(),
-      category:document.getElementById('inp-category').value.trim()
+      category:document.getElementById('inp-category').value.trim(),
+      wikidata_url:(document.getElementById('inp-wikidata')||{}).value?.trim()||'',
+      kg_mid:(document.getElementById('inp-kgmid')||{}).value?.trim()||'',
+      aliases:((document.getElementById('inp-aliases')||{}).value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      locale:(document.getElementById('inp-locale')||{}).value||'en-US',
+      intent:(document.getElementById('inp-intent')||{}).value||'commercial',
+      vertical:(document.getElementById('inp-vertical')||{}).value||''
     },
     competitors,
     dynamic_search_context:{
       enabled:document.getElementById('rag-enabled').checked,
       capture_hidden_queries:document.getElementById('rag-capture-hidden').checked,
+      mode:(document.getElementById('rag-mode')||{}).value||'both',
+      serp_provider:(document.getElementById('rag-serp-provider')||{}).value||'serper',
+      fanout_depth:parseInt((document.getElementById('rag-fanout-depth')||{}).value||'3',10),
       max_search_queries_per_prompt:parseInt(document.getElementById('rag-max-queries').value||'3',10),
-      source_priority:document.getElementById('rag-source-priority').value,
+      allowed_domains:((document.getElementById('rag-allowed')||{}).value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      blocked_domains:((document.getElementById('rag-blocked')||{}).value||'').split(',').map(s=>s.trim()).filter(Boolean),
+      date_restrict:(document.getElementById('rag-date')||{}).value||'',
+      location_code:(document.getElementById('rag-location')||{}).value?.trim()||'',
       query_templates:document.getElementById('rag-templates').value.split('\n').map(s=>s.trim()).filter(Boolean)
     },
     temporal_grounding:{
       enabled:document.getElementById('temporal-enabled').checked,
       content_freshness_timestamp:document.getElementById('temporal-timestamp').value,
-      baseline_model_snapshot:document.getElementById('temporal-snap-a').value.trim(),
-      current_model_snapshot:document.getElementById('temporal-snap-b').value.trim(),
-      compare_mode:document.getElementById('temporal-compare-mode').value
+      baseline_model_snapshot:(document.getElementById('temporal-snap-a')||{}).value||'',
+      current_model_snapshot:(document.getElementById('temporal-snap-b')||{}).value||'',
+      compare_mode:document.getElementById('temporal-compare-mode').value,
+      freshness_window:(document.getElementById('temporal-window')||{}).value||'30d',
+      date_modified_check:(document.getElementById('temporal-datemod')||{}).value||'on'
     },
     geo_localization:{
       enabled:document.getElementById('geo-enabled').checked,
       markets,
-      proxy_type:document.getElementById('geo-proxy-type').value,
-      proxy_server:document.getElementById('geo-proxy-server').value.trim(),
-      proxy_username:document.getElementById('geo-proxy-user').value.trim(),
-      proxy_password:document.getElementById('geo-proxy-pass').value.trim(),
-      rotation_interval_min:parseInt(document.getElementById('geo-rotation').value||'5',10)
+      budget_split:(document.getElementById('geo-budget-split')||{}).value||'pilot',
+      eu_us_split:(document.getElementById('geo-eu-us')||{}).value||'on',
+      gbp_check:(document.getElementById('geo-gbp')||{}).value||'on'
     },
     execution:{
+      scale:(document.getElementById('exec-scale')||{}).value||'pilot',
       prompt_count:parseInt(document.getElementById('exec-prompt-count').value||'50',10),
       max_concurrent_requests:parseInt(document.getElementById('exec-concurrency').value||'10',10),
       temperature:parseFloat(document.getElementById('exec-temp').value||'0.15'),
-      rag_enabled:document.getElementById('exec-rag').checked
-    }
+      seed:seedRaw===''||seedRaw==null?null:parseInt(seedRaw,10),
+      top_p:0.9, max_calls_per_run:2500,
+      grounding_mode:(document.getElementById('exec-rag-mode')||{}).value||'grounded',
+      rag_enabled:((document.getElementById('exec-rag-mode')||{}).value||'grounded')!=='memory'
+    },
+    evidence_standard:'grounded-only, Wilson 95% CI, manifest-verified (never 100% verified)'
   };
   return config;
 }
+// ── Enterprise helpers (P0): onboarding, registry, engine matrix, budget ──
+async function autoOnboard(){
+  const site=(document.getElementById('inp-website')||{}).value?.trim();
+  if(!site){toast('Enter Brand Website first','er');return}
+  const el=document.getElementById('onboard-result');el.textContent='Crawling sitemap…';
+  try{
+    const r=await api('/api/onboard?domain='+encodeURIComponent(site));
+    if(r.error){el.textContent='Onboard failed: '+r.error;return}
+    el.innerHTML='<b>'+(r.prompts||[]).length+'</b> money prompts + <b>'+(r.competitors||[]).length+'</b> competitors drafted. '+(r.preflight?'Preflight: snippet '+(r.preflight.snippet_eligible?'eligible ✓':'BLOCKED ✗')+'.':'')+' <button class="btn btn-outline btn-sm" onclick="applyOnboard()">Apply to form</button>';
+    window._onboard=r;toast('Auto-discover complete','ok');
+  }catch(e){el.textContent='Backend not connected — CLI: python scripts/auto_onboard.py --domain '+site;showOffline()}
+}
+function applyOnboard(){
+  const r=window._onboard||{};if(!r)return;
+  (r.competitors||[]).forEach(c=>{if(c&&!competitors.includes(c))competitors.push(c)});renderCompetitors();
+  if(r.prompts&&r.prompts.length){document.getElementById('rag-templates').value=r.prompts.slice(0,20).join('\n')}
+  if(r.aliases&&r.aliases.length){document.getElementById('inp-aliases').value=r.aliases.join(', ')}
+  toast('Onboard applied to form','ok');
+}
+async function autofillLastmod(){
+  const site=(document.getElementById('inp-website')||{}).value?.trim();if(!site){toast('Enter website first','er');return}
+  try{const r=await api('/api/onboard?domain='+encodeURIComponent(site));if(r.lastmod){document.getElementById('temporal-timestamp').value=r.lastmod.slice(0,10);toast('lastmod applied: '+r.lastmod.slice(0,10),'ok')}else toast('No lastmod found','er')}catch(e){toast('Backend not connected','er')}
+}
+async function loadModels(){
+  try{
+    const r=await api('/api/models');
+    const opts=(r.models||[]).map(m=>{const dead=m.shutdown||m.deprecated;return `<option value="${m.id}" ${dead?'disabled':''}>${m.label}${dead?' — SHUTDOWN '+m.shutdown+' → '+m.migrate_to:''}${m.unverified?' (UNVERIFIED)':''}</option>`}).join('');
+    for(const id of ['temporal-snap-a','temporal-snap-b']){const el=document.getElementById(id);if(el){el.innerHTML='<option value="">Select model…</option>'+opts;if(window._pendingSnaps&&window._pendingSnaps[id])el.value=window._pendingSnaps[id]}}
+  }catch(e){/* offline: keep placeholders */}
+}
+const ENGINE_COST={chatgpt:0.035,claude:0.101,gemini:0.002,perplexity:0.02,grok:0.035,deepseek:0.002,serp:0.005};
+async function loadEngineMatrix(){
+  const el=document.getElementById('engine-matrix');if(!el)return;
+  try{
+    const [h,s]=await Promise.all([api('/api/health').catch(()=>({})),api('/api/security').catch(()=>({}))]);
+    const engines=h.engines||['chatgpt','claude','gemini','perplexity','grok','deepseek','serp','aio','ai-mode'];
+    el.innerHTML=engines.map(e=>`<span class="pill ${h.ready?'p-green':'p-blue'}" title="est $${ENGINE_COST[e]||0.01}/answer">● ${e} ~$${ENGINE_COST[e]||0.01}</span>`).join(' ')+' <span style="color:var(--text3)">keys: '+(h.keys_present!=null?h.keys_present:'unknown')+' · role: '+(s.auth?.caller_role||'n/a')+'</span>';
+    const ps=document.getElementById('proxy-env-status');if(ps){const pe=(s.proxy_env||{});ps.textContent='Proxy env: '+(pe.configured?'✓ configured':'✗ missing (direct egress logged)');ps.className='pill '+(pe.configured?'p-green':'p-yellow')}
+    estimateCost();
+  }catch(e){el.textContent='Engine matrix offline — start backend for live key/cost status.'}
+}
+function estimateCost(){
+  const el=document.getElementById('budget-preview');if(!el)return;
+  try{
+    const n=parseInt(document.getElementById('exec-prompt-count').value||'50',10);
+    const mode=(document.getElementById('exec-rag-mode')||{}).value||'grounded';
+    const mult=mode==='dual'?2:1;
+    const perQ=0.245*mult; // Stork.AI Aug-2026: $0.245/question x 6 engines
+    const total=n*perQ;
+    el.innerHTML=`Est. run cost: <b>$${total.toFixed(2)}</b> (${n} prompts × ${mult===2?'dual-query ':''}~$${perQ.toFixed(3)}/q, 6 engines) · hard gate $500/day ${total>500?'— <b style="color:var(--red)">OVER BUDGET, will refuse</b>':'— within budget ✓'} · max 2500 calls`;
+  }catch{}
+}
+async function pullGoogleTruth(){
+  const el=document.getElementById('google-truth-inline');el.textContent='Pulling…';
+  try{const r=await api('/api/google-truth');el.innerHTML='Generative-inclusion gate: <b>'+(r.genai?'files present ✓':'no files — upload CSVs or run gsc_genai_pull.py')+'</b>. '+(r.controls?'Controls audit present ✓.':'')+' <span style="color:var(--text3)">Web clicks include AI totals — delta ≠ causation.</span>'}catch(e){el.textContent='Backend not connected.'}
+}
+function dlTemplate(kind){
+  const samples={gsc:'page,country,device,date,genai_clicks,genai_impressions,web_clicks\nhttps://YOUR-SITE/pricing,US,desktop,2026-09-01,12,140,90\n',ga4:'source,sessions,conversions,revenue\nchatgpt,320,18,5400\nperplexity,140,9,2100\n'};
+  const blob=new Blob([samples[kind]||samples.gsc],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=kind+'_template.csv';a.click();toast(kind.toUpperCase()+' template downloaded','ok');
+}
+async function loadRuns(){
+  try{
+    const r=await api('/api/runs');const sel=document.getElementById('run-picker');if(!sel)return;
+    sel.innerHTML='<option value="">Latest run (default)</option>'+(r.runs||[]).map(x=>`<option value="${x.name}">${x.name}${x.hasAnalysis?' ✓':''}</option>`).join('');
+    const t=await api('/api/trends?days=90').catch(()=>null);
+    const sp=document.getElementById('run-spark');if(sp&&t)sp.textContent='90-day trends: '+(t.source||'ready')+' · '+t.days+'d window · SoMV sparkline in Results → Trends.';
+  }catch(e){}
+}
+async function diffRuns(){toast('Diff renders in Results after analysis (trend_store latest-vs-previous)','in');switchPage('page-results')}
+document.addEventListener('DOMContentLoaded',()=>{loadModels();loadEngineMatrix();loadRuns();const pc=document.getElementById('exec-prompt-count');if(pc)pc.addEventListener('input',estimateCost);const rm=document.getElementById('exec-rag-mode');if(rm)rm.addEventListener('change',estimateCost);const dh=document.getElementById('rag-capture-hidden');if(dh)dh.addEventListener('change',()=>{const w=document.getElementById('deepseek-warn');if(w)w.style.display=dh.checked?'block':'none'})});
 
 async function loadConfig(){
   try{
@@ -865,40 +956,33 @@ async function loadConfig(){
       document.getElementById('inp-category').value=c.brand.category||'';
     }
     if(c.competitors&&c.competitors.length){competitors.push(...c.competitors);renderCompetitors()}
+    const set=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null)el.value=v};
+    const setC=(id,v)=>{const el=document.getElementById(id);if(el&&v!=null)el.checked=v};
+    if(c.brand){set('inp-brand',c.brand.primary_name);set('inp-website',c.brand.website);set('inp-category',c.brand.category);set('inp-wikidata',c.brand.wikidata_url);set('inp-kgmid',c.brand.kg_mid);if(c.brand.aliases)set('inp-aliases',c.brand.aliases.join(', '));set('inp-locale',c.brand.locale);set('inp-intent',c.brand.intent);set('inp-vertical',c.brand.vertical)}
+    if(c.competitors&&c.competitors.length){competitors.push(...c.competitors);renderCompetitors()}
     const ds=c.dynamic_search_context||{};
     if(Object.keys(ds).length){
-      document.getElementById('rag-enabled').checked=ds.enabled!==false;
-      document.getElementById('rag-capture-hidden').checked=ds.capture_hidden_queries!==false;
-      document.getElementById('rag-max-queries').value=ds.max_search_queries_per_prompt||3;
-      if(ds.source_priority)document.getElementById('rag-source-priority').value=ds.source_priority;
-      if(ds.query_templates)document.getElementById('rag-templates').value=ds.query_templates.join('\n');
+      setC('rag-enabled',ds.enabled!==false);setC('rag-capture-hidden',ds.capture_hidden_queries!==false);
+      set('rag-max-queries',ds.max_search_queries_per_prompt||3);set('rag-mode',ds.mode);set('rag-serp-provider',ds.serp_provider);set('rag-fanout-depth',ds.fanout_depth);
+      set('rag-allowed',(ds.allowed_domains||[]).join(', '));set('rag-blocked',(ds.blocked_domains||[]).join(', '));set('rag-date',ds.date_restrict);set('rag-location',ds.location_code);
+      if(ds.query_templates)set('rag-templates',ds.query_templates.join('\n'));
     }
     const tg=c.temporal_grounding||{};
     if(Object.keys(tg).length){
-      document.getElementById('temporal-enabled').checked=tg.enabled!==false;
-      if(tg.content_freshness_timestamp)document.getElementById('temporal-timestamp').value=tg.content_freshness_timestamp;
-      if(tg.baseline_model_snapshot)document.getElementById('temporal-snap-a').value=tg.baseline_model_snapshot;
-      if(tg.current_model_snapshot)document.getElementById('temporal-snap-b').value=tg.current_model_snapshot;
-      if(tg.compare_mode)document.getElementById('temporal-compare-mode').value=tg.compare_mode;
+      setC('temporal-enabled',tg.enabled!==false);set('temporal-timestamp',tg.content_freshness_timestamp);
+      window._pendingSnaps={'temporal-snap-a':tg.baseline_model_snapshot,'temporal-snap-b':tg.current_model_snapshot};set('temporal-snap-a',tg.baseline_model_snapshot);set('temporal-snap-b',tg.current_model_snapshot);
+      set('temporal-compare-mode',tg.compare_mode);set('temporal-window',tg.freshness_window);set('temporal-datemod',tg.date_modified_check);
     }
     const gl=c.geo_localization||{};
     if(Object.keys(gl).length){
-      document.getElementById('geo-enabled').checked=gl.enabled!==false;
-      if(gl.markets&&gl.markets.length){
-        document.querySelectorAll('.chip.zone').forEach(ch=>ch.classList.toggle('active',gl.markets.includes(ch.dataset.market)));
-      }
-      if(gl.proxy_type)document.getElementById('geo-proxy-type').value=gl.proxy_type;
-      if(gl.proxy_server)document.getElementById('geo-proxy-server').value=gl.proxy_server;
-      if(gl.proxy_username)document.getElementById('geo-proxy-user').value=gl.proxy_username;
-      if(gl.proxy_password)document.getElementById('geo-proxy-pass').value=gl.proxy_password;
-      if(gl.rotation_interval_min)document.getElementById('geo-rotation').value=gl.rotation_interval_min;
+      setC('geo-enabled',gl.enabled!==false);
+      if(gl.markets&&gl.markets.length){document.querySelectorAll('.chip.zone').forEach(ch=>ch.classList.toggle('active',gl.markets.includes(ch.dataset.market)))}
+      set('geo-budget-split',gl.budget_split);set('geo-eu-us',gl.eu_us_split);set('geo-gbp',gl.gbp_check);
     }
     const ex=c.execution||{};
     if(Object.keys(ex).length){
-      if(ex.prompt_count)document.getElementById('exec-prompt-count').value=ex.prompt_count;
-      if(ex.max_concurrent_requests)document.getElementById('exec-concurrency').value=ex.max_concurrent_requests;
-      if(ex.temperature!=null)document.getElementById('exec-temp').value=ex.temperature;
-      if(ex.rag_enabled!=null)document.getElementById('exec-rag').checked=ex.rag_enabled;
+      set('exec-scale',ex.scale);set('exec-prompt-count',ex.prompt_count);set('exec-concurrency',ex.max_concurrent_requests);
+      set('exec-temp',ex.temperature);set('exec-seed',ex.seed);set('exec-rag-mode',ex.grounding_mode);
     }
   }catch(e){console.warn('loadConfig failed',e)}
 }
@@ -1055,7 +1139,7 @@ function animateCounters(){
   counterAnimated=true;
 }
 
-const SECTION_IDS=['res-exec-summary','res-cmo-dashboard','res-attribution','res-somv','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-enterprise','res-google-truth','res-surfaces','res-fanout','res-ace','res-crawl','res-charts','res-strategic-summary'];
+const SECTION_IDS=['res-exec-summary','res-cmo-dashboard','res-trends','res-surfaces','res-google-truth','res-somv','res-volumes','res-graveyard','res-thirdparty','res-attribution','res-triples','res-graphs','res-embeddings','res-sentiment','res-biases','res-recommendations','res-enterprise','res-fanout','res-ace','res-crawl','res-commerce','res-charts','res-strategic-summary'];
 
 function updateResultsNav(){
   const navLinks=document.querySelectorAll('.results-nav a');
@@ -1096,7 +1180,6 @@ function initSectionObserver(){
 function populateHeroStats(s,dataSource){
   const el=document.getElementById('hero-stats');
   if(!el||!s)return;
-  const ts=s.triple_stats||{};
   const sm=s.somv||{};
   const overall=sm.overall||{};
   const bs=overall.brand_stats||{};
@@ -1104,17 +1187,33 @@ function populateHeroStats(s,dataSource){
   const brandA=bs[primaryBrand]||{};
   const recs=s.recommendations||[];
   const dq=s.data_quality||{};
+  const gr=s.somv?.grounded_only||{};
+  const tj=s.traffic_join||{};
+  const sf=s.surface_split||{};
   const somvPct=brandA.share_of_voice?(brandA.share_of_voice*100).toFixed(1):'0';
+  const gshare=gr.grounded_share!=null?(gr.grounded_share*100).toFixed(0)+'%':'—';
+  const rev=tj.ai_revenue_share!=null?(tj.ai_revenue_share*100).toFixed(1)+'%':'—';
+  const surfNote=sf.overlap_aio_aimode!=null?('AIO⨯AI-Mode '+(sf.overlap_aio_aimode*100).toFixed(1)+'% overlap — never averaged'):'AIO / AI-Mode / Gemini tracked separately';
   const sourceLabel=dataSource?.hasUploads?'Data from uploaded files':'Real LLM Data (Orchestrator)';
   el.innerHTML=`
-    <div><span class="hero-badge" style="background:#16a34a22;color:#16a34a;border:1px solid #16a34a44">${sourceLabel}</span></div>
+    <div style="width:100%"><span class="hero-badge" style="background:#16a34a22;color:#16a34a;border:1px solid #16a34a44">${sourceLabel}</span>
+    <span class="hero-badge" style="background:#ffffff22;color:#fff;border:1px solid #ffffff44">Grounded-only · Wilson 95% CI · manifest-verified</span></div>
     <div class="hero-stat"><div class="num">${fmt(s.total_records||0)}</div><div class="label">Records Analyzed</div></div>
     <div class="hero-stat"><div class="num">${dq.citation_count??s.attribution_stats?.total_responses??0}</div><div class="label">Citations Found</div></div>
-    <div class="hero-stat"><div class="num">${s.attribution_stats?.unique_models||dq.unique_models?.length||0}</div><div class="label">LLM Models</div></div>
-    <div class="hero-stat"><div class="num">${somvPct}%</div><div class="label">Brand SoMV</div></div>
-    <div class="hero-stat"><div class="num">${dq.coverage_score??0}/100</div><div class="label">Data Coverage</div></div>
-    <div class="hero-stat"><div class="num">${recs.length}</div><div class="label">Actions</div></div>`;
+    <div class="hero-stat"><div class="num">${gshare}</div><div class="label">Browse-Evidenced (grounded)</div></div>
+    <div class="hero-stat"><div class="num">${somvPct}%</div><div class="label">Brand SoMV (grounded)</div></div>
+    <div class="hero-stat"><div class="num">${rev}</div><div class="label">AI-Referrer Revenue Share</div></div>
+    <div class="hero-stat"><div class="num">${recs.length}</div><div class="label">Actions</div></div>
+    <div style="width:100%;font-size:.7em;color:#94a3b8">${surfNote} · 90-day trends in Trends tab · LLMs are non-deterministic: intervals, not point truth.</div>`;
   renderDataQuality(s);
+  // live trend sparkline (SQLite series when available)
+  api('/api/trends?days=90').then(t=>{
+    if(!t||!t.series||!t.series.length)return;
+    const last=t.series[0];
+    const d=document.createElement('div');d.style.cssText='width:100%;font-size:.72em;color:#a5d6a7';
+    d.textContent=`Latest snapshot ${last.run_id}: grounded ${last.grounded_share!=null?(last.grounded_share*100).toFixed(0)+'%':'—'} · CPR ${last.overall_cpr!=null?(last.overall_cpr*100).toFixed(0)+'%':'—'} · snippet-blocked ${last.snippet_blocked?'YES':'no'} · ${t.series.length} snapshots in window`;
+    el.appendChild(d);
+  }).catch(()=>{});
 }
 
 async function loadResults(){
@@ -1134,8 +1233,14 @@ async function loadResults(){
   const sections=[
     ['res-exec-summary',()=>renderSection1(s)],
     ['res-cmo-dashboard',()=>renderCMODashboard(s)],
-    ['res-attribution',()=>renderSection2(s)],
+    ['res-trends',()=>renderTrends(s)],
+    ['res-surfaces',()=>renderSurfaces(s)],
+    ['res-google-truth',()=>renderGoogleTruth(s)],
     ['res-somv',()=>renderSection3(s)],
+    ['res-volumes',()=>renderVolumes(s)],
+    ['res-graveyard',()=>renderGraveyard(s)],
+    ['res-thirdparty',()=>renderThirdParty(s)],
+    ['res-attribution',()=>renderSection2(s)],
     ['res-triples',()=>renderSection4(s)],
     ['res-graphs',()=>renderSection5(s)],
     ['res-embeddings',()=>renderSection6(s)],
@@ -1144,11 +1249,10 @@ async function loadResults(){
     ['res-recommendations',()=>renderSection9(s)],
     ['res-enterprise',()=>renderEnterprise(s)],
     ['res-strategic-summary',()=>renderStrategicSummary(s)],
-    ['res-google-truth',()=>renderGoogleTruth(s)],
-    ['res-surfaces',()=>renderSurfaces(s)],
     ['res-fanout',()=>renderFanout(s)],
     ['res-ace',()=>renderACE(s)],
-    ['res-crawl',()=>renderCrawlTruth(s)]
+    ['res-crawl',()=>renderCrawlTruth(s)],
+    ['res-commerce',()=>renderCommerceLocal(s)]
   ];
   sections.forEach(([id,fn],idx)=>{
     const el=document.getElementById(id);

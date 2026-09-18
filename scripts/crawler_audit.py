@@ -99,7 +99,7 @@ def probe_site(site, out_dir):
             "present": bool(f.get("status") == 200 and len(body) > 0),
             "note": {
                 "/robots.txt": "Check per-bot Disallow for OAI-SearchBot/PerplexityBot/ClaudeBot/Bingbot. Google-Extended block != AI Mode removal.",
-                "/llms.txt": "Agents-only convenience (15% experimental weight). NOT a Google ranking factor (Illyes/Mueller). Ship MCP/UCP/ACP first.",
+                "/llms.txt": "Infra-only probe for coding agents, score 0. NOT a Google ranking factor (Google Dec-2025 + May-15-2026, Illyes/Mueller). Ship MCP/UCP/ACP first.",
                 "/.well-known/mcp.json": "MCP/WebMCP 35%: must validate as JSON + live tool-call e2e (scripts/mcp_tool_test.py).",
                 "/sitemap.xml": "Must list money pages with fresh lastmod (ChatGPT/Perplexity ~30d window).",
             }[p],

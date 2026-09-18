@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS geo_splits(
   PRIMARY KEY(run_id, region));
 CREATE TABLE IF NOT EXISTS retention_policy(
   key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS citation_history(
+  domain TEXT PRIMARY KEY, months_cited INTEGER DEFAULT 1,
+  first_seen TEXT, last_seen TEXT);
+CREATE TABLE IF NOT EXISTS sentiment_versions(
+  run_id TEXT PRIMARY KEY, model TEXT, recorded_at TEXT);
 """
 
 
@@ -69,6 +74,47 @@ def upsert_run(results: Dict[str, Any], run_id: str, root=None) -> Path:
         con.close()
     logger.info(f'Trend snapshot upserted: {run_id} -> {db}')
     return db
+
+
+def upsert_citation_history(domains, run_id: str, root=None) -> None:
+    """Track per-domain months-cited for Content Graveyard (Somantra-2026 replication).
+    domains: iterable of domain strings cited in this run. Never fabricates history."""
+    import re as _re
+    from datetime import datetime as _dt, timezone as _tz
+    db = db_path(root)
+    con = sqlite3.connect(db)
+    try:
+        con.executescript(SCHEMA)
+        now = _dt.now(_tz.utc).isoformat()
+        seen = set()
+        for d in (domains or []):
+            d = str(d).strip().lower()
+            if not d or d in seen:
+                continue
+            seen.add(d)
+            row = con.execute("SELECT months_cited, first_seen FROM citation_history WHERE domain=?", (d,)).fetchone()
+            if row is None:
+                con.execute("INSERT INTO citation_history(domain, months_cited, first_seen, last_seen) VALUES(?,?,?,?)",
+                            (d, 1, now, now))
+            else:
+                con.execute("UPDATE citation_history SET months_cited=months_cited+1, last_seen=? WHERE domain=?", (now, d))
+        con.commit()
+    finally:
+        con.close()
+
+
+def record_sentiment_version(run_id: str, model: str, root=None) -> None:
+    """Version the sentiment model per run so VADER rows never compare to RoBERTa historically."""
+    from datetime import datetime as _dt2, timezone as _tz2
+    db = db_path(root)
+    con = sqlite3.connect(db)
+    try:
+        con.executescript(SCHEMA)
+        con.execute("INSERT OR REPLACE INTO sentiment_versions(run_id, model, recorded_at) VALUES(?,?,?)",
+                    (run_id, model, _dt2.now(_tz2.utc).isoformat()))
+        con.commit()
+    finally:
+        con.close()
 
 
 def upsert_geo_split(run_id: str, region: str, leader: str, leader_share: float, root=None) -> None:

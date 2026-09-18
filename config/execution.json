@@ -111,12 +111,14 @@
       "tos_acknowledged": false,
       "proxy": {
         "enabled": false,
+        "_comment": "SECRETS NEVER LIVE HERE OR IN THE BROWSER. Set PROXY_URL / AEO_PROXY_<MARKET> in server .env (env wins). Empty strings = direct egress. Server strips proxy creds posted via /api/config.",
         "server": "",
         "username": "",
-        "password": ""
+        "password": "",
+        "rotation_interval_min": 5
       },
       "proxy_map": {
-        "_comment": "Per-market residential egress for geo rotation (US-NY, UK-LND, APAC-SGP...). Env AEO_PROXY_<MARKET> (e.g. AEO_PROXY_US_NY) wins over this map; map wins over proxy default. Value: full proxy URL or {server,username,password}. Empty = direct egress (logged per market group).",
+        "_comment": "Per-market residential egress for geo rotation (US-NY, UK-LND, APAC-SGP...). Env AEO_PROXY_<MARKET> (e.g. AEO_PROXY_US_NY) is the ONLY credential source; this map holds no secrets. Empty = direct egress (logged per market group). Prefer SERP location_code for EU (GDPR).",
         "US-NY": { "server": "", "username": "", "password": "" },
         "UK-LND": { "server": "", "username": "", "password": "" },
         "APAC-SGP": { "server": "", "username": "", "password": "" }

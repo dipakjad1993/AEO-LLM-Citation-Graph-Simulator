@@ -1466,14 +1466,68 @@ function renderACE(s) {
 function renderCrawlTruth(s) {
   const c = s.crawl_truth || {};
   let h = sectionHeader('crawl', 'Crawl Truth — Bot Fetches + MCP/robots/llms.txt Probes', 'If you are blocked, you are invisible — and no SoMV number explains why without this. ChatGPT = Bing + OAI-SearchBot · Claude = Brave · Gemini = Google + YouTube 9.5% · Perplexity = Sonar + Reddit 6.6%.', '🤖');
-  if (c.status === 'no_data') h += insight('No crawl_truth.json. Run: <code>python scripts/crawler_audit.py --site https://example.com [--log access.log]</code>. Live: <code>GET /api/crawl</code>. ' + (c.message || ''), 'warn');
-  else h += insight('Crawl Truth present — see <code>GET /api/crawl</code> for per-bot hits + /.well-known/mcp.json + llms.txt + robots probes.', 'success');
+  if (c.status === 'no_data') h += insight('No crawl_truth.json. Run: <code>python scripts/crawler_audit.py --site https://YOUR-SITE/ [--log access.log]</code>. Live: <code>GET /api/crawl</code>. OAI-SearchBot vs ChatGPT-User vs GPTBot vs PerplexityBot vs Google-Extended + robots/llms.txt probes. ' + (c.message || ''), 'warn');
+  else h += insight('Crawl Truth present — see <code>GET /api/crawl</code> for per-bot hits + /.well-known/mcp.json + llms.txt (info-only, score 0) + robots probes.', 'success');
   const fc = s.factcheck || {};
   if (fc.status === 'ok') h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val">${(fc.accuracy_intervention_rate * 100).toFixed(1)}%</div><div class="lbl">Accuracy Intervention Rate (bench 7.9%)</div></div><div class="res-kpi"><div class="val">${fc.needs_fix}/${fc.checked}</div><div class="lbl">Claims Needing Fix</div></div></div>`;
   else h += insight('FactCheck loop: ' + (fc.message || 'no claim feed yet — triples feed FactCheckLoop when present.') + ' Apply via <code>python scripts/remediation_pr.py --apply-factcheck</code> (PR drafts, never auto-publish).', 'warn');
   const mm = s.multimodal_truth || {};
   if (mm.status === 'no_data') h += insight('Multimodal/Merchant/Local: ' + (mm.message || 'run multimodal_merchant_audit.py for image alt, VideoObject/transcripts, GTIN/price/availability, GBP checklist.'), 'warn');
   else h += insight('Multimodal/Merchant/Local audit present.', 'success');
+  h += '</div>';
+  return h;
+}
+
+// ── P0/P1 enterprise views (2026-09): Trends hero, Volumes, Graveyard, Third-party, Commerce ──
+function renderTrends(s) {
+  let h = sectionHeader('trends', 'Trend Intelligence — 90-Day Memory (Not Point-in-Time)', 'Only 16% of brands track AI performance (McKinsey). Silent shortlists happen before the site visit. Live: GET /api/trends?days=90 (SQLite data/trends.db). Scheduler diffs: SoMV drop >15%, competitor surge >15%, CPR <50%, volatility HIGH.', '↗');
+  h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val">90d</div><div class="lbl">SoMV / CPR / Volatility Window</div></div><div class="res-kpi"><div class="val">>15%</div><div class="lbl">SoMV Drop Alert Threshold</div></div><div class="res-kpi"><div class="val">&lt;50%</div><div class="lbl">CPR Alert Floor</div></div></div>`;
+  h += insight('Point-in-time SoMV is theater (AIO shifts ~70% on repeat). This tab reads <code>GET /api/trends?days=90</code>: run_snapshots series + alerts + EU/US geo splits + sentiment-model versions (VADER rows never compare to RoBERTa). Run 2+ daily cycles to populate.', '');
+  h += deepAnalysis('How to use: schedule <code>npm run scheduler:daily</code> → each run upserts SoMV/CPR/volatility + citation_history + sentiment version. Slack webhook fires on SoMV drop >15% / competitor surge >15% / hallucination spike / CPR <50% / snippet-blocked / volatility HIGH. Configure <code>SLACK_WEBHOOK_URL</code> in server env (never in browser).');
+  h += '</div>';
+  return h;
+}
+function renderVolumes(s) {
+  const v = s.volume_weighted_somv || {};
+  let h = sectionHeader('volumes', 'Prompt Volumes — Volume-Weighted SoMV (Profound-Moat Answer)', 'Panel-free volumes: YOUR run history + GSC queries → volume-weighted SoMV. scripts/prompt_miner.py → prompt_volumes.json → analytics/prompt_volumes.py. Live: GET /api/prompt-volumes.', '⚖️');
+  if (v.status !== 'ok') h += insight('No volume weighting yet. ' + (v.message || 'Run: python scripts/prompt_miner.py --gsc gsc.csv, then re-analyze.') + ' Unweighted SoMV treats every prompt equally — volumes fix that.', 'warn');
+  else {
+    h += miniTable(['Brand', 'Unweighted SoMV', 'Volume-weighted SoMV', 'Δ'], (v.brands || []).slice(0, 12).map((b) => ({ cells: [b.brand, (b.unweighted * 100).toFixed(1) + '%', (b.weighted * 100).toFixed(1) + '%', ((b.weighted - b.unweighted) * 100).toFixed(1) + 'pp'] })));
+    h += deepAnalysis('Volume source: ' + (v.volume_source || 'run history + GSC') + '. Panel-free ≠ Profound 1.5B panel — label honestly.');
+  }
+  h += '</div>';
+  return h;
+}
+function renderGraveyard(s) {
+  const g = s.content_graveyard || {};
+  let h = sectionHeader('graveyard', 'Content Graveyard — What Persists (Somantra Aug-2026)', '2.4M citations: 57.2% of domains cited once then never again. Comparison / FAQ / discount-savings persist ~2x. "Complete guide" vanishes ~3.5x. First 30% of page wins 44% of cites. Named author + bio +60% (Presenc, 1800 pairs). Live: GET /api/graveyard.', '🪦');
+  if (g.status === 'projected_single_run') {
+    h += insight('PROJECTED (1 run in trends.db): persistence from format priors, not measured. ' + (g.message || ''), 'warn');
+    h += miniTable(['Format', 'Cites this run', 'Expected persistence', 'Guidance'], (g.formats || []).map((f) => ({ cells: [f.format, f.cites_this_run, '×' + f.expected_persistence, 'Ship comparison/FAQ; avoid "complete guide" framing'] })));
+  } else if (g.status === 'measured') {
+    h += `<div class="res-kpi-row"><div class="res-kpi"><div class="val">${g.one_and_done_pct}%</div><div class="lbl">One-and-Done (you vs 57.2% bench)</div></div><div class="res-kpi"><div class="val">${g.domains_tracked}</div><div class="lbl">Domains Tracked</div></div><div class="res-kpi"><div class="val">${g.runs_in_history}</div><div class="lbl">Runs in History</div></div></div>`;
+    h += miniTable(['At-risk domain', 'Months cited'], (g.at_risk_domains || []).slice(0, 10).map(([d, m]) => ({ cells: [d, m] })));
+  } else h += insight('No graveyard yet. ' + (g.message || 'Run 2+ daily cycles; trends.db builds citation_history.'), 'warn');
+  h += businessImpact('What persists (Somantra 2026)', ['Comparison pages + FAQ + discount/savings language persist ~2x — ship those formats first.', '"Complete guide" framing is 3.5x more likely to vanish — split into task-complete pages.', 'Move the answer into the first 30% of the page (44% of citations). Named author + bio (+60%).']);
+  h += '</div>';
+  return h;
+}
+function renderThirdParty(s) {
+  let h = sectionHeader('thirdparty', 'Third-Party Dominance — Earn / Edit / Respond', 'YouTube 0.737 correlation · Reddit 6.6% on Perplexity · Google-owned 22.8% on Gemini · Wikipedia 16.3% ChatGPT / 11.2% Gemini. Agencies sell this: top-10 missing_authority_nodes + owner + pitch draft + outreach_briefs/*.md. Live: GET /api/third-party.', '◉');
+  const gs = s.graph_stats || {};
+  const missing = gs.missing_authority_nodes || (s.third_party_geo || {}).missing_authority_nodes || [];
+  if (!missing.length) h += insight('No missing-authority nodes yet — run a full analysis with citations. Earn/edit/respond scoring appears per citing URL.', 'warn');
+  else h += miniTable(['Missing authority', 'Weight', 'Play'], missing.slice(0, 10).map((m) => ({ cells: [m.domain || m.url || JSON.stringify(m).slice(0, 60), m.weight || '—', m.play || 'earn/edit/respond → outreach_briefs/*.md'] })));
+  h += deepAnalysis('Off-platform signals: track Reddit threads + YouTube chapters citing competitors. Edit (Wikipedia/Reddit with sources) vs Earn (pitch data) vs Respond (reviews/forum) — scored per URL in third_party_geo.py.');
+  h += '</div>';
+  return h;
+}
+function renderCommerceLocal(s) {
+  const c = s.commerce || {};
+  let h = sectionHeader('commerce', 'Multimodal + Merchant + Local — Revenue Surfaces', 'Image alt · VideoObject/transcripts/chapters (YouTube 0.737) · GTIN/price/availability feed · ACP checkout_eligibility probe · Shopify UCP native_commerce badge · Rufus (Amazon) · ChatGPT Shopping data · per-locale GBP checklist. Live: GET /api/commerce-local. Enterprise buyers REQUIRE this on page 1.', '🛒');
+  h += insight('Run: <code>python scripts/multimodal_merchant_audit.py --site https://YOUR-SITE/ --feed merchant_feed.csv</code> + <code>node scripts/acp_probe.js --cron</code>. MCP/WebMCP tool-call e2e: <code>python scripts/mcp_tool_test.py &lt;site&gt;</code>.', '');
+  if (c.status === 'ok' || c.feed_health) h += miniTable(['Check', 'Result'], Object.entries(c.feed_health || c).slice(0, 12).map(([k, v]) => ({ cells: [k, typeof v === 'object' ? JSON.stringify(v).slice(0, 80) : String(v)] })));
+  else h += insight('No merchant audit yet. ' + (c.message || 'Upload a merchant feed or run the audit script.'), 'warn');
   h += '</div>';
   return h;
 }

@@ -15,7 +15,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 // ─── Security config ──────────────────────────────────────────────
 const AUTH_TOKEN = process.env.AEO_AUTH_TOKEN || '';
 const MAX_BODY_BYTES = 25 * 1024 * 1024; // 25MB (was 500MB — DoS vector)
-const UPLOAD_SECTIONS = new Set(['prompts', 'entities', 'corpus', 'gold_standards', 'system_config', 'results']);
+const UPLOAD_SECTIONS = new Set(['prompts', 'entities', 'corpus', 'gold_standards', 'system_config', 'results', 'traffic', 'crawl', 'commerce']);
 // Static serving is allow-listed: dashboard + screenshots only. Never serve arbitrary ROOT files.
 const STATIC_ALLOW = [
   { route: '/', file: path.join(ROOT, 'src', 'dashboard', 'index.html'), type: 'text/html' },
@@ -502,16 +502,105 @@ const server = http.createServer(async (req, res) => {
       try {
         const data = JSON.parse(body.toString('utf8'));
         if (typeof data !== 'object' || data === null || Array.isArray(data)) throw new Error('config must be a JSON object');
+        // ── P0 hardening: never persist proxy secrets from the browser ──
+        let strippedSecrets = 0;
+        const scrub = (o) => {
+          if (!o || typeof o !== 'object') return;
+          for (const k of Object.keys(o)) {
+            if (/proxy_(password|username|server)|proxy_pass/i.test(k) && typeof o[k] === 'string' && o[k]) { o[k] = ''; strippedSecrets++; }
+            else if (typeof o[k] === 'object') scrub(o[k]);
+          }
+        };
+        scrub(data);
+        // ── Deprecated snapshot guard (mirrors migrate:check, but in UI) ──
+        const badSnapshots = [];
+        try {
+          const reg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'models.json'), 'utf8'));
+          const dead = new Set(Object.keys(reg.deprecated || {}));
+          const tg = data.temporal_grounding || {};
+          for (const s of [tg.baseline_model_snapshot, tg.current_model_snapshot]) {
+            if (s && (dead.has(s) || /gpt-4o-2024|gpt-4o-mini-search-preview|claude-3-opus|gemini-1\.5-pro/.test(s))) badSnapshots.push(s);
+          }
+        } catch {}
+        if (badSnapshots.length) { jsonRes(res, 400, { error: `Deprecated snapshot refused: ${badSnapshots.join(', ')} (shutdown — pick from /api/models registry)`, code: 'DEPRECATED_SNAPSHOT' }); return; }
+        // ── Placeholder guard: refuse example.com / acme.com without real domain ──
+        const site = (data.brand?.website || '').toLowerCase();
+        if (site.includes('example.com') && !site.includes('yourbrand')) { jsonRes(res, 400, { error: 'Placeholder domain refused: replace example.com with your real brand domain.', code: 'PLACEHOLDER_DOMAIN' }); return; }
         fs.mkdirSync(path.dirname(CONFIG_INPUTS_FILE), { recursive: true });
         fs.writeFileSync(CONFIG_INPUTS_FILE, JSON.stringify(data, null, 2));
         const sysDir = path.join(UPLOAD_DIR, 'system_config');
         fs.mkdirSync(sysDir, { recursive: true });
         fs.writeFileSync(path.join(sysDir, 'system_inputs.json'), JSON.stringify(data, null, 2));
-        log('Saved system inputs config');
-        jsonRes(res, 200, { success: true });
+        log(`Saved system inputs config${strippedSecrets ? ` (stripped ${strippedSecrets} proxy secret field(s) — use PROXY_URL env)` : ''}`);
+        auditEvent('config_saved', { reqId, strippedSecrets });
+        jsonRes(res, 200, { success: true, strippedSecrets, evidence: 'grounded-only, Wilson 95% CI, manifest-verified' });
       } catch (e) {
         jsonRes(res, 400, { error: `Invalid JSON: ${e.message}` });
       }
+      return;
+    }
+
+    // ── Live model registry (P0): dropdown source, shutdown badges ──
+    if (url.pathname === '/api/models' && req.method === 'GET') {
+      try {
+        const reg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'models.json'), 'utf8'));
+        const models = [];
+        for (const [fam, group] of Object.entries(reg.models || {})) {
+          for (const [key, m] of Object.entries(group)) {
+            models.push({ id: m.model_id || key, key, family: fam, label: m.display_name || key, surface: m.surface, cost: m.avg_cost_per_answer_usd, supports_seed: !!m.supports_seed, supports_web_search: !!m.supports_web_search });
+          }
+        }
+        const deprecated = Object.entries(reg.deprecated || {}).map(([k, v]) => ({ id: v.model_id || k, key: k, shutdown: v.shutdown, migrate_to: v.migrate_to, deprecated: true }));
+        const candidates = Object.entries(reg.late_2026_candidates || {}).filter(([k]) => !k.startsWith('_')).map(([k, v]) => ({ id: v.model_id || k, key: k, unverified: true, scheduled: !!v.scheduled, label: `${k} (UNVERIFIED)` }));
+        jsonRes(res, 200, { reqId, version: reg.version, models, deprecated, candidates, cost_reference: reg.cost_reference }, req);
+      } catch (e) { jsonRes(res, 500, { error: e.message }, req); }
+      return;
+    }
+
+    // ── Auto-onboard (P0): domain -> sitemap prompts + competitors + preflight ──
+    if (url.pathname === '/api/onboard' && req.method === 'GET') {
+      const domain = (url.searchParams.get('domain') || '').trim();
+      if (!domain) { jsonRes(res, 400, { error: 'Use /api/onboard?domain=https://your-site.com' }, req); return; }
+      try {
+        const out = execFileSync('python', [path.join(ROOT, 'scripts', 'auto_onboard.py'), '--domain', domain], { timeout: 60000, encoding: 'utf8' });
+        let parsed = null;
+        try { parsed = JSON.parse(out.slice(out.indexOf('{'))); } catch { parsed = { raw: out.slice(0, 2000) }; }
+        jsonRes(res, 200, { reqId, domain, ...parsed }, req);
+      } catch (e) {
+        // Fallback: honest no_data with CLI hint (never fabricate competitors)
+        jsonRes(res, 200, { reqId, domain, status: 'probe_failed', message: `Auto-onboard probe failed: ${e.message}. CLI: python scripts/auto_onboard.py --domain ${domain}`, prompts: [], competitors: [], aliases: [] }, req);
+      }
+      return;
+    }
+
+    // ── P1 enterprise views: volumes / graveyard / third-party / commerce-local / mcp ──
+    if (url.pathname === '/api/prompt-volumes' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir && fs.existsSync(path.join(analysisDir, 'pipeline_summary.json')) ? JSON.parse(fs.readFileSync(path.join(analysisDir, 'pipeline_summary.json'), 'utf8')) : null;
+      jsonRes(res, 200, { reqId, volumes: summary?.volume_weighted_somv || { status: 'no_data', message: 'No volume-weighted SoMV yet — run scripts/prompt_miner.py (GSC queries -> prompt_volumes.json) then re-analyze.' }, analysisDir: analysisDir ? path.basename(analysisDir) : null }, req);
+      return;
+    }
+    if (url.pathname === '/api/graveyard' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir && fs.existsSync(path.join(analysisDir, 'pipeline_summary.json')) ? JSON.parse(fs.readFileSync(path.join(analysisDir, 'pipeline_summary.json'), 'utf8')) : null;
+      jsonRes(res, 200, { reqId, graveyard: summary?.content_graveyard || { status: 'no_data', message: 'No graveyard yet — run 2+ daily cycles; trends.db builds citation_history.' }, benchmark: 'Somantra Aug-2026: 57.2% domains cited once then never again; comparison/FAQ/discount persist 2x; complete-guide vanishes 3.5x.' }, req);
+      return;
+    }
+    if (url.pathname === '/api/third-party' && req.method === 'GET') {
+      const analysisDir = findLatestAnalysis();
+      const summary = analysisDir && fs.existsSync(path.join(analysisDir, 'pipeline_summary.json')) ? JSON.parse(fs.readFileSync(path.join(analysisDir, 'pipeline_summary.json'), 'utf8')) : null;
+      const geo = summary?.third_party_geo || summary?.geo_temporal || { status: 'no_data', message: 'No third-party dominance yet.' };
+      jsonRes(res, 200, { reqId, third_party: geo, outreach: 'reports/outreach_briefs/*.md (earn/edit/respond scoring per citing URL)', analysisDir: analysisDir ? path.basename(analysisDir) : null }, req);
+      return;
+    }
+    if (url.pathname === '/api/commerce-local' && req.method === 'GET') {
+      const tdir = path.join(DATA_DIR, 'uploads');
+      const readJ = (p) => { try { return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null; } catch { return null; } };
+      jsonRes(res, 200, { reqId, multimodal_merchant: readJ(path.join(tdir, 'commerce', 'multimodal_merchant_audit.json')) || { status: 'no_data', message: 'Run: python scripts/multimodal_merchant_audit.py --site https://YOUR-SITE/ (image alt, VideoObject/transcripts/chapters, GTIN/price/availability, per-locale GBP checklist; YouTube 0.737 correlation).' }, commerce: readJ(path.join(tdir, 'commerce', 'commerce_audit.json')), note: 'ACP checkout_eligibility probe: node scripts/acp_probe.js; Shopify UCP native_commerce badge; Rufus/ChatGPT-Shopping feeds.' }, req);
+      return;
+    }
+    if (url.pathname === '/api/mcp' && req.method === 'GET') {
+      jsonRes(res, 200, { reqId, tools: ['/api/health', '/api/models', '/api/onboard', '/api/trends', '/api/surfaces', '/api/fanout', '/api/ace', '/api/crawl', '/api/google-truth', '/api/graveyard', '/api/prompt-volumes', '/api/third-party', '/api/commerce-local', '/api/verify', '/api/export', '/api/audit'], openapi: '/api/mcp?format=openapi', note: 'Otterly-parity 28-tool surface: every GET truth endpoint is an MCP tool. POST /api/admin/scim/users is admin-only.' }, req);
       return;
     }
 
@@ -685,9 +774,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Health check (Render/Docker probes; no auth required)
+    // Health check (Render/Docker probes; no auth required) — enriched with engine matrix
     if (url.pathname === '/api/health' && req.method === 'GET') {
-      jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString(), reqId }, req);
+      const keys = { openai: !!process.env.OPENAI_API_KEY, anthropic: !!process.env.ANTHROPIC_API_KEY, google: !!(process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY), perplexity: !!process.env.PERPLEXITY_API_KEY, deepseek: !!process.env.DEEPSEEK_API_KEY, xai: !!process.env.XAI_API_KEY, serp: !!(process.env.SERP_API_KEY || process.env.DATAFORSEO_LOGIN) };
+      const engines = ['chatgpt', 'claude', 'gemini', 'perplexity', 'grok', 'deepseek', 'serp', 'aio', 'ai-mode'];
+      jsonRes(res, 200, { ok: true, service: 'aeo-simulator', time: new Date().toISOString(), reqId, engines, keys_present: Object.values(keys).filter(Boolean).length, keys, ready: Object.values(keys).some(Boolean), evidence: 'grounded-only, Wilson 95% CI, manifest-verified' }, req);
       return;
     }
 
@@ -699,11 +790,13 @@ const server = http.createServer(async (req, res) => {
         jsonRes(res, 200, { reqId, error: 'playwright_only is debug-only and MUST never be used for production tracking (ToS risk, ~16x cost). Set execution.mode to api_only (default) or hybrid (85/15 parity control).', refused: true }, req);
         return;
       }
+      const proxyEnv = { configured: !!(process.env.PROXY_URL || Object.keys(process.env).some((k) => k.startsWith('AEO_PROXY_'))), via: process.env.PROXY_URL ? 'PROXY_URL' : (Object.keys(process.env).filter((k) => k.startsWith('AEO_PROXY_')).slice(0, 5)), slack: !!process.env.SLACK_WEBHOOK_URL };
       jsonRes(res, 200, {
         reqId, cors: { mode: CORS_STAR ? 'star_dev_only' : (ALLOWED_ORIGINS.length ? 'allow_list' : 'loopback_default'), origins: ALLOWED_ORIGINS },
         auth: { token_required: IS_PROD || Boolean(AUTH_TOKEN), sso_enforced: SSO_ENFORCED, oidc_issuer: OIDC_ISSUER || null, rbac: ['admin', 'analyst', 'viewer'], caller_role: callerRole(req) },
         playwright: { mode: exec.mode, sample_rate: exec.playwright_sample_rate, parity_only: true, max_sample_rate: 0.2 },
-        budgets: { daily_usd: exec.cost_tracking?.daily_budget_usd, max_calls_per_run: exec.max_calls_per_run },
+        budgets: { daily_usd: exec.cost_tracking?.daily_budget_usd, max_calls_per_run: exec.max_calls_per_run, per_question_ref_usd: 0.245 },
+        proxy_env: proxyEnv, location_codes: exec.serp?.location_map || {},
       }, req);
       return;
     }
@@ -731,16 +824,27 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 90-day trends (auth required): SQLite trend store, JSON fallback
+    // 90-day trends (auth required): real SQLite series + alerts, JSON fallback
     if (url.pathname === '/api/trends' && req.method === 'GET') {
       const days = Math.min(parseInt(url.searchParams.get('days') || '90', 10) || 90, 365);
       try {
         const trendsDb = path.join(DATA_DIR, 'trends.db');
         if (fs.existsSync(trendsDb)) {
-          jsonRes(res, 200, { reqId, source: 'sqlite', db: 'data/trends.db', days, note: 'Query via analytics/trend_store.py; dashboard renders 90-day SoMV/CPR/volatility with CIs.' }, req);
+          let series = [], alerts = [], geo = [], sentimentModels = [];
+          try {
+            const { DatabaseSync } = await import('node:sqlite');
+            const db = new DatabaseSync(trendsDb);
+            try {
+              series = db.prepare(`SELECT run_id, started_at, grounded_share, overall_cpr, unstable_share, snippet_blocked FROM run_snapshots ORDER BY started_at DESC LIMIT ${days}`).all();
+              try { alerts = db.prepare('SELECT run_id, type, payload, created_at FROM alerts ORDER BY created_at DESC LIMIT 50').all(); } catch {}
+              try { geo = db.prepare('SELECT run_id, region, leader, leader_share FROM geo_splits ORDER BY run_id DESC LIMIT 50').all(); } catch {}
+              try { sentimentModels = db.prepare('SELECT run_id, model, recorded_at FROM sentiment_versions ORDER BY recorded_at DESC LIMIT 50').all(); } catch {}
+            } finally { try { db.close(); } catch {} }
+          } catch {}
+          jsonRes(res, 200, { reqId, source: 'sqlite', db: 'data/trends.db', days, series, alerts, geo_splits: geo, sentiment_models: sentimentModels, alerts_rule: 'SoMV drop >15%, competitor surge >15%, CPR <50%, volatility HIGH, snippet-blocked', note: 'Landing hero: 90-day SoMV/CPR/volatility with Wilson CIs. Only 16% of brands track AI performance (McKinsey) — trend DB beats point-in-time.' }, req);
         } else {
           const analysisDir = findLatestAnalysis();
-          jsonRes(res, 200, { reqId, source: 'latest_json_fallback', days, analysisDir: analysisDir ? path.basename(analysisDir) : null, note: 'No trends.db yet — run 2+ daily cycles; scheduler upserts snapshots.' }, req);
+          jsonRes(res, 200, { reqId, source: 'latest_json_fallback', days, analysisDir: analysisDir ? path.basename(analysisDir) : null, series: [], note: 'No trends.db yet — run 2+ daily cycles; scheduler upserts snapshots.' }, req);
         }
       } catch (e) { jsonRes(res, 500, { error: e.message }, req); }
       return;

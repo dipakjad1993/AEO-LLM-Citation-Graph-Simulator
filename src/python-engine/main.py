@@ -648,6 +648,11 @@ class AEOAnalyticsEngine:
             except Exception as e:
                 results['ace_predictor'] = {'status': 'error', 'message': str(e)}
             try:
+                from analytics.content_graveyard import ContentGraveyard
+                results['content_graveyard'] = ContentGraveyard(self.config).analyze(_rows, root=self.root_dir / 'data')
+            except Exception as e:
+                results['content_graveyard'] = {'status': 'error', 'message': str(e)}
+            try:
                 from analytics.factcheck_loop import FactCheckLoop
                 _claims = []
                 for t in ((results.get('triple_stats', {}) or {}).get('top_objects', []) or [])[:0]:
@@ -696,9 +701,22 @@ class AEOAnalyticsEngine:
 
             # 90-day trend snapshot (SQLite, not JSON): SoMV/CPR/volatility history.
             try:
-                from analytics.trend_store import upsert_run as _upsert, upsert_geo_split as _geo
+                from analytics.trend_store import upsert_run as _upsert, upsert_geo_split as _geo, upsert_citation_history as _ch, record_sentiment_version as _sv
                 _run_id = output_path.name
                 _upsert(results, _run_id, root=self.root_dir / 'data')
+                try:
+                    _doms = []
+                    for _r in _rows[:5000]:
+                        for _c in (_r.get('citations') or []):
+                            _u = (_c.get('url') if isinstance(_c, dict) else str(_c)) or ''
+                            _d = _u.replace('https://', '').replace('http://', '').split('/')[0].lower()
+                            if _d:
+                                _doms.append(_d)
+                    _ch(_doms, _run_id, root=self.root_dir / 'data')
+                    _sent_model = ((results.get('sentiment_matrix', {}) or {}).get('model')) or ('roberta' if not str((results.get('pipeline_meta', {}) or {}).get('lite_mode', '')).lower().startswith('lite') else 'vader-lite')
+                    _sv(_run_id, str(_sent_model), root=self.root_dir / 'data')
+                except Exception as _ce:
+                    logger.warning(f'Citation-history persist failed: {_ce}')
                 results['trend_snapshot'] = {'run_id': _run_id, 'db': 'data/trends.db'}
                 try:
                     _gt = results.get('geo_temporal', {}) or {}

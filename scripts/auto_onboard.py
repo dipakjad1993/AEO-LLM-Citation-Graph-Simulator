@@ -165,8 +165,24 @@ def main():
     with open(ROOT / "data" / "uploads" / "prompts" / "onboard_prompts.json", "w") as f:
         Path(ROOT / "data" / "uploads" / "prompts").mkdir(parents=True, exist_ok=True)
         json.dump([{"prompt": p["prompt"], "verb_type": p["verb_type"]} for p in prompts], f, indent=2)
-    print(json.dumps({k: v for k, v in result.items() if k != "suggested_prompts"}, indent=2))
-    print(f"Suggested {len(prompts)} prompts -> onboard_pack.json + onboard_prompts.json")
+    # API contract (GET /api/onboard): prompts[], competitors[], aliases[], lastmod, preflight.snippet_eligible
+    lastmod = None
+    try:
+        for u in (sitemap.get("urls", []) or [])[:5]:
+            f = fetch(u)
+            m = re.search(r'(?:dateModified|lastmod|article:modified_time)["\s:>]+([0-9]{4}-[0-9]{2}-[0-9]{2})', f.get("body", "") or "")
+            if m:
+                lastmod = m.group(1)
+                break
+    except Exception:
+        pass
+    checks["snippet_eligible"] = not (checks.get("nosnippet") or checks.get("max_snippet_0"))
+    api_view = {"status": result["status"], "domain": origin, "brand": brand,
+                "prompts": [p["prompt"] for p in prompts], "suggested_prompts": prompts,
+                "competitors": comps, "competitors_heuristic": heuristic,
+                "aliases": [brand], "lastmod": lastmod, "preflight": checks,
+                "sitemap": result["sitemap"]}
+    print(json.dumps(api_view))
     return 0
 
 
